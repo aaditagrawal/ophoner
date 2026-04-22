@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.ophoner.data.model.PinnedFolder
 import dev.ophoner.data.model.ProviderConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -27,6 +28,7 @@ class SettingsRepository @Inject constructor(
     private val activeProviderKey = stringPreferencesKey("active_provider_id")
     private val workingDirKey = stringPreferencesKey("working_directory_uri")
     private val systemPromptKey = stringPreferencesKey("system_prompt")
+    private val pinnedFoldersKey = stringPreferencesKey("pinned_folders")
 
     private val prettyJson = Json {
         prettyPrint = true
@@ -136,6 +138,37 @@ class SettingsRepository @Inject constructor(
         val activeId = prefs[activeProviderKey] ?: return null
         val providers = json.decodeFromString<List<ProviderConfig>>(prefs[providersKey] ?: "[]")
         return providers.find { it.id == activeId }?.withSecureApiKey()
+    }
+
+    fun observePinnedFolders(): Flow<List<PinnedFolder>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[pinnedFoldersKey] ?: "[]"
+        runCatching { json.decodeFromString<List<PinnedFolder>>(raw) }.getOrDefault(emptyList())
+    }
+
+    suspend fun pinFolder(uri: String, name: String) {
+        context.dataStore.edit { prefs ->
+            val raw = prefs[pinnedFoldersKey] ?: "[]"
+            val current = runCatching { json.decodeFromString<List<PinnedFolder>>(raw) }
+                .getOrDefault(emptyList())
+            if (current.none { it.uri == uri }) {
+                val updated = current + PinnedFolder(
+                    uri = uri,
+                    name = name,
+                    createdAt = System.currentTimeMillis(),
+                )
+                prefs[pinnedFoldersKey] = json.encodeToString(updated)
+            }
+        }
+    }
+
+    suspend fun unpinFolder(uri: String) {
+        context.dataStore.edit { prefs ->
+            val raw = prefs[pinnedFoldersKey] ?: "[]"
+            val current = runCatching { json.decodeFromString<List<PinnedFolder>>(raw) }
+                .getOrDefault(emptyList())
+            val updated = current.filter { it.uri != uri }
+            prefs[pinnedFoldersKey] = json.encodeToString(updated)
+        }
     }
 
     private fun ProviderConfig.withSecureApiKey(): ProviderConfig =

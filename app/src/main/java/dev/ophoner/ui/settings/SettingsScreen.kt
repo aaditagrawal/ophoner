@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -38,7 +39,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -78,6 +79,7 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddProvider by rememberSaveable { mutableStateOf(false) }
+    var editingProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val dirPickerLauncher = rememberLauncherForActivityResult(
@@ -120,7 +122,7 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
@@ -143,6 +145,7 @@ fun SettingsScreen(
                     config = provider,
                     isActive = provider.id == uiState.activeProviderId,
                     onSetActive = { viewModel.setActiveProvider(provider.id) },
+                    onEdit = { editingProviderId = provider.id },
                     onDelete = { viewModel.deleteProvider(provider.id) },
                 )
                 Spacer(Modifier.height(8.dp))
@@ -266,13 +269,30 @@ fun SettingsScreen(
     }
 
     if (showAddProvider) {
-        AddProviderDialog(
+        ProviderDialog(
+            existing = null,
             onDismiss = { showAddProvider = false },
-            onAdd = { config ->
+            onSubmit = { config ->
                 viewModel.addProvider(config)
                 showAddProvider = false
             },
         )
+    }
+
+    editingProviderId?.let { id ->
+        val existing = uiState.providers.firstOrNull { it.id == id }
+        if (existing != null) {
+            ProviderDialog(
+                existing = existing,
+                onDismiss = { editingProviderId = null },
+                onSubmit = { config ->
+                    viewModel.updateProvider(config)
+                    editingProviderId = null
+                },
+            )
+        } else {
+            editingProviderId = null
+        }
     }
 }
 
@@ -294,6 +314,7 @@ private fun ProviderCard(
     config: ProviderConfig,
     isActive: Boolean,
     onSetActive: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Row(
@@ -346,6 +367,15 @@ private fun ProviderCard(
             )
         }
 
+        IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+            Icon(
+                Icons.Default.Edit,
+                contentDescription = "Edit",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+
         IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
             Icon(
                 Icons.Default.Delete,
@@ -359,21 +389,25 @@ private fun ProviderCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddProviderDialog(
+private fun ProviderDialog(
+    existing: ProviderConfig?,
     onDismiss: () -> Unit,
-    onAdd: (ProviderConfig) -> Unit,
+    onSubmit: (ProviderConfig) -> Unit,
 ) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var apiKey by rememberSaveable { mutableStateOf("") }
-    var baseUrl by rememberSaveable { mutableStateOf("") }
-    var modelId by rememberSaveable { mutableStateOf("") }
-    var selectedType by rememberSaveable { mutableStateOf(ProviderType.CUSTOM_OPENAI) }
+    val isEdit = existing != null
+    var name by rememberSaveable(existing?.id) { mutableStateOf(existing?.displayName ?: "") }
+    var apiKey by rememberSaveable(existing?.id) { mutableStateOf(existing?.apiKey ?: "") }
+    var baseUrl by rememberSaveable(existing?.id) { mutableStateOf(existing?.baseUrl ?: "") }
+    var modelId by rememberSaveable(existing?.id) { mutableStateOf(existing?.modelId ?: "") }
+    var selectedType by rememberSaveable(existing?.id) {
+        mutableStateOf(existing?.providerType ?: ProviderType.CUSTOM_OPENAI)
+    }
     var typeExpanded by remember { mutableStateOf(false) }
     var showApiKey by rememberSaveable { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Provider") },
+        title = { Text(if (isEdit) "Edit Provider" else "Add Provider") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
@@ -396,7 +430,7 @@ private fun AddProviderDialog(
                         readOnly = true,
                         label = { Text("Provider Type") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
-                        modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                     )
                     ExposedDropdownMenu(
                         expanded = typeExpanded,
@@ -460,8 +494,8 @@ private fun AddProviderDialog(
             TextButton(
                 onClick = {
                     if (name.isNotBlank() && apiKey.isNotBlank() && baseUrl.isNotBlank() && modelId.isNotBlank()) {
-                        onAdd(ProviderConfig(
-                            id = java.util.UUID.randomUUID().toString(),
+                        onSubmit(ProviderConfig(
+                            id = existing?.id ?: java.util.UUID.randomUUID().toString(),
                             displayName = name,
                             apiKey = apiKey,
                             baseUrl = baseUrl,
@@ -472,7 +506,7 @@ private fun AddProviderDialog(
                 },
                 enabled = name.isNotBlank() && apiKey.isNotBlank() && baseUrl.isNotBlank() && modelId.isNotBlank(),
             ) {
-                Text("Add")
+                Text(if (isEdit) "Save" else "Add")
             }
         },
         dismissButton = {

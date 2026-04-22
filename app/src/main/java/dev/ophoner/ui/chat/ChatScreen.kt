@@ -39,10 +39,11 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -51,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -218,9 +220,9 @@ private fun EmptyState() {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             androidx.compose.material3.Surface(
-                shape = CircleShape,
+                shape = MaterialShapes.Cookie9Sided.toShape(),
                 color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(72.dp),
+                modifier = Modifier.size(84.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
@@ -406,9 +408,8 @@ fun ToolCallCard(
 
             if (isExecuting) {
                 Spacer(Modifier.width(6.dp))
-                CircularProgressIndicator(
-                    modifier = Modifier.size(10.dp),
-                    strokeWidth = 1.dp,
+                LoadingIndicator(
+                    modifier = Modifier.size(14.dp),
                     color = AccentAmber,
                 )
             }
@@ -468,9 +469,8 @@ private fun ThinkingIndicator() {
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(14.dp),
-            strokeWidth = 1.5.dp,
+        LoadingIndicator(
+            modifier = Modifier.size(18.dp),
             color = MaterialTheme.colorScheme.primary,
         )
         Spacer(Modifier.width(8.dp))

@@ -2,7 +2,13 @@
 agp = "9.0.1"
 kotlin = "2.2.10"
 ksp = "2.2.10-2.0.2"
-compose-bom = "2025.01.01"
+compose-bom = "2025.11.00"
+# Pinned outside the BOM: Material 3 Expressive APIs
+# (MaterialExpressiveTheme, MotionScheme, LoadingIndicator, MaterialShapes, toShape())
+# are marked `internal` in material3 1.4.x stable and only exposed from 1.5.x alphas.
+# Bump in lockstep once Expressive ships as stable.
+material3 = "1.5.0-alpha17"
+graphics-shapes = "1.0.1"
 hilt = "2.59"
 hilt-navigation-compose = "1.2.0"
 room = "2.7.0"
@@ -22,8 +28,9 @@ compose-ui = { group = "androidx.compose.ui", name = "ui" }
 compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 compose-material-icons = { group = "androidx.compose.material", name = "material-icons-extended" }
+graphics-shapes = { group = "androidx.graphics", name = "graphics-shapes", version.ref = "graphics-shapes" }
 
 # AndroidX
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }

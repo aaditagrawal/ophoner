@@ -54,12 +54,19 @@ class ConversationRepository @Inject constructor(
         return entity.toDomain()
     }
 
+    suspend fun getConversation(conversationId: String): Conversation? =
+        conversationDao.getById(conversationId)?.toDomain()
+
     suspend fun updateTitle(conversationId: String, title: String) {
         conversationDao.updateTitle(conversationId, title, System.currentTimeMillis())
     }
 
     suspend fun deleteConversation(conversationId: String) {
         conversationDao.deleteById(conversationId)
+    }
+
+    suspend fun deleteConversationsByFolderUri(uri: String) {
+        conversationDao.deleteByFolderUri(uri)
     }
 
     suspend fun saveMessage(message: Message) {

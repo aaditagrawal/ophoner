@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,30 +21,30 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,10 +64,29 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ophoner.data.model.Conversation
 import dev.ophoner.data.model.ConversationMode
+import dev.ophoner.data.model.PinnedFolder
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+
+private val FolderPalette = listOf(
+    Color(0xFF3B82F6), // blue
+    Color(0xFFEF4444), // red
+    Color(0xFF22C55E), // green
+    Color(0xFFF59E0B), // amber
+    Color(0xFF06B6D4), // cyan
+    Color(0xFFA855F7), // purple
+    Color(0xFFEC4899), // pink
+    Color(0xFF10B981), // emerald
+)
+
+private fun folderColor(name: String): Color {
+    // Safe non-negative modulo; abs(Int.MIN_VALUE) would overflow.
+    val idx = ((name.hashCode().toLong() % FolderPalette.size) + FolderPalette.size) % FolderPalette.size
+    return FolderPalette[idx.toInt()]
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,12 +98,14 @@ fun ConversationListScreen(
     viewModel: ConversationListViewModel = hiltViewModel(),
 ) {
     val conversations by viewModel.conversations.collectAsStateWithLifecycle()
+    val pinnedFolders by viewModel.pinnedFolders.collectAsStateWithLifecycle()
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         uri?.let {
             val name = it.lastPathSegment?.replace("primary:", "/") ?: "folder"
+            viewModel.pinFolder(it.toString(), name)
             onNewFolderConversation(it.toString(), name)
         }
     }
@@ -101,7 +124,7 @@ fun ConversationListScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
@@ -129,20 +152,20 @@ fun ConversationListScreen(
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
-        if (conversations.isEmpty()) {
+        val generalConvs = remember(conversations) {
+            conversations.filter { it.mode == ConversationMode.GENERAL }
+        }
+        val projects = remember(conversations, pinnedFolders) {
+            buildProjects(conversations, pinnedFolders)
+        }
+
+        if (generalConvs.isEmpty() && projects.isEmpty()) {
             EmptyState(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
             )
         } else {
-            val generalConvs = conversations.filter { it.mode == ConversationMode.GENERAL }
-            val folderGroups = conversations
-                .filter { it.mode == ConversationMode.FOLDER }
-                .groupBy { it.scopedFolderName ?: "Unknown folder" }
-                .toList()
-                .sortedByDescending { (_, convs) -> convs.maxOf { it.updatedAt } }
-
             val expandedFolders = remember { mutableStateMapOf<String, Boolean>() }
 
             LazyColumn(
@@ -152,52 +175,59 @@ fun ConversationListScreen(
                 contentPadding = PaddingValues(
                     top = padding.calculateTopPadding() + 4.dp,
                     bottom = padding.calculateBottomPadding() + 96.dp,
-                    start = 16.dp,
-                    end = 16.dp,
+                    start = 8.dp,
+                    end = 8.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                if (folderGroups.isNotEmpty()) {
-                    item("header-folders") {
-                        GroupHeader(
-                            label = "Folders",
-                            count = folderGroups.sumOf { it.second.size },
-                        )
-                    }
-                    for ((folderName, convs) in folderGroups) {
-                        val expanded = expandedFolders[folderName] ?: true
-                        item("folder-${folderName}") {
-                            FolderHeader(
-                                name = folderName,
-                                count = convs.size,
+                if (projects.isNotEmpty()) {
+                    item("header-projects") { SectionLabel("Projects") }
+
+                    for (project in projects) {
+                        val expanded = expandedFolders[project.key] ?: false
+                        val color = folderColor(project.name)
+                        item("folder-${project.key}") {
+                            FolderRow(
+                                name = project.name,
+                                count = project.chats.size,
+                                color = color,
                                 expanded = expanded,
-                                onToggle = { expandedFolders[folderName] = !expanded },
+                                onToggle = { expandedFolders[project.key] = !expanded },
+                                onNewChat = {
+                                    onNewFolderConversation(project.uri, project.name)
+                                },
+                                onRemove = { viewModel.removeProject(project.uri) },
                             )
                         }
                         if (expanded) {
-                            items(convs, key = { "folder-item-${it.id}" }) { conv ->
-                                ConversationCard(
-                                    conversation = conv,
-                                    onClick = { onOpenConversation(conv.id) },
-                                    onDelete = { viewModel.deleteConversation(conv.id) },
-                                    showFolderBadge = false,
-                                )
+                            if (project.chats.isEmpty()) {
+                                item("folder-${project.key}-empty") {
+                                    EmptyProjectHint(accentColor = color)
+                                }
+                            } else {
+                                items(project.chats, key = { "folder-item-${it.id}" }) { conv ->
+                                    FolderChildRow(
+                                        conversation = conv,
+                                        accentColor = color,
+                                        onClick = { onOpenConversation(conv.id) },
+                                        onDelete = { viewModel.deleteConversation(conv.id) },
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
                 if (generalConvs.isNotEmpty()) {
-                    item("header-general") {
-                        Spacer(Modifier.height(if (folderGroups.isNotEmpty()) 8.dp else 0.dp))
-                        GroupHeader(label = "General", count = generalConvs.size)
+                    item("header-recents") {
+                        Spacer(Modifier.height(if (projects.isNotEmpty()) 16.dp else 0.dp))
+                        SectionLabel("Recents")
                     }
                     items(generalConvs, key = { "general-item-${it.id}" }) { conv ->
-                        ConversationCard(
+                        RecentRow(
                             conversation = conv,
                             onClick = { onOpenConversation(conv.id) },
                             onDelete = { viewModel.deleteConversation(conv.id) },
-                            showFolderBadge = false,
                         )
                     }
                 }
@@ -214,9 +244,9 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(
-            shape = CircleShape,
+            shape = MaterialShapes.Cookie9Sided.toShape(),
             color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.size(88.dp),
+            modifier = Modifier.size(96.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
@@ -242,240 +272,243 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun GroupHeader(label: String, count: Int) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.5.sp,
-            ),
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.width(8.dp))
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceVariant,
-        ) {
-            Text(
-                text = count.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            )
-        }
-    }
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium.copy(
+            letterSpacing = 0.5.sp,
+            fontWeight = FontWeight.Medium,
+        ),
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+    )
 }
 
 @Composable
-private fun FolderHeader(
+private fun FolderRow(
     name: String,
     count: Int,
+    color: Color,
     expanded: Boolean,
     onToggle: () -> Unit,
+    onNewChat: () -> Unit,
+    onRemove: () -> Unit,
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
         animationSpec = tween(durationMillis = 200),
         label = "folder-chevron",
     )
+    var confirmRemove by rememberSaveable(name) { mutableStateOf(false) }
+    LaunchedEffect(confirmRemove) {
+        if (confirmRemove) {
+            delay(3000)
+            confirmRemove = false
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onToggle)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            Icons.Default.KeyboardArrowDown,
-            contentDescription = if (expanded) "Collapse" else "Expand",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .size(20.dp)
-                .rotate(rotation),
-        )
-        Spacer(Modifier.width(6.dp))
-        Icon(
-            Icons.Default.FolderOpen,
+            Icons.Default.Folder,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(18.dp),
+            tint = color,
+            modifier = Modifier.size(26.dp),
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(14.dp))
         Text(
             name,
-            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.width(8.dp))
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.primaryContainer,
-        ) {
-            Text(
-                text = count.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ConversationCard(
-    conversation: Conversation,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
-    showFolderBadge: Boolean,
-) {
-    var confirmDelete by rememberSaveable(conversation.id) { mutableStateOf(false) }
-
-    ElevatedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Avatar(conversation = conversation)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    conversation.title.ifBlank { "Untitled" },
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (showFolderBadge && conversation.mode == ConversationMode.FOLDER) {
-                        FolderBadge(conversation.scopedFolderName ?: "folder")
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            "·",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.width(6.dp))
-                    }
-                    Text(
-                        formatRelativeDate(conversation.updatedAt),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            if (confirmDelete) {
-                IconButton(
-                    onClick = {
-                        onDelete()
-                        confirmDelete = false
-                    },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        Icons.Default.DeleteOutline,
-                        contentDescription = "Confirm delete",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            } else {
-                IconButton(
-                    onClick = { confirmDelete = true },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        Icons.Default.DeleteOutline,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
+        if (expanded) {
+            IconButton(
+                onClick = onNewChat,
+                modifier = Modifier.size(32.dp),
+            ) {
                 Icon(
-                    Icons.Default.ChevronRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    Icons.Default.Add,
+                    contentDescription = "New chat in $name",
+                    tint = color,
                     modifier = Modifier.size(18.dp),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun Avatar(conversation: Conversation) {
-    val isFolder = conversation.mode == ConversationMode.FOLDER
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = if (isFolder) MaterialTheme.colorScheme.secondaryContainer
-        else MaterialTheme.colorScheme.primaryContainer,
-        modifier = Modifier.size(40.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (isFolder) {
+            IconButton(
+                onClick = {
+                    if (confirmRemove) onRemove() else confirmRemove = true
+                },
+                modifier = Modifier.size(32.dp),
+            ) {
                 Icon(
-                    Icons.Default.FolderOpen,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.size(20.dp),
-                )
-            } else {
-                Icon(
-                    Icons.Default.ChatBubbleOutline,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(20.dp),
+                    Icons.Default.DeleteOutline,
+                    contentDescription = if (confirmRemove) "Confirm remove" else "Remove project",
+                    tint = if (confirmRemove) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(18.dp),
                 )
             }
+        } else {
+            Text(
+                count.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.padding(end = 8.dp),
+            )
+        }
+        Icon(
+            Icons.Default.KeyboardArrowDown,
+            contentDescription = if (expanded) "Collapse" else "Expand",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier
+                .size(20.dp)
+                .rotate(rotation),
+        )
+    }
+}
+
+@Composable
+private fun EmptyProjectHint(accentColor: Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 22.dp, end = 4.dp, top = 2.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .height(28.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(accentColor.copy(alpha = 0.35f)),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            "No chats yet — tap + to start one",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+        )
+    }
+}
+
+@Composable
+private fun FolderChildRow(
+    conversation: Conversation,
+    accentColor: Color,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 22.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Left vertical accent bar
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .height(36.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(accentColor.copy(alpha = 0.35f)),
+        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick)
+                .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    conversation.title.ifBlank { "Untitled" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.95f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    formatRelativeDate(conversation.updatedAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                )
+            }
+            DeleteAction(key = conversation.id, onDelete = onDelete)
         }
     }
 }
 
 @Composable
-private fun FolderBadge(name: String) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.secondaryContainer,
+private fun RecentRow(
+    conversation: Conversation,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Default.FolderOpen,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(12.dp),
-            )
-            Spacer(Modifier.width(4.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                name,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                conversation.title.ifBlank { "Untitled" },
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                formatRelativeDate(conversation.updatedAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            )
         }
+        DeleteAction(key = conversation.id, onDelete = onDelete)
+    }
+}
+
+@Composable
+private fun DeleteAction(
+    key: Any,
+    onDelete: () -> Unit,
+) {
+    var confirm by rememberSaveable(key) { mutableStateOf(false) }
+    LaunchedEffect(confirm) {
+        if (confirm) {
+            delay(3000)
+            confirm = false
+        }
+    }
+    IconButton(
+        onClick = {
+            if (confirm) {
+                onDelete()
+                confirm = false
+            } else {
+                confirm = true
+            }
+        },
+        modifier = Modifier.size(36.dp),
+    ) {
+        Icon(
+            Icons.Default.DeleteOutline,
+            contentDescription = if (confirm) "Confirm delete" else "Delete",
+            tint = if (confirm) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

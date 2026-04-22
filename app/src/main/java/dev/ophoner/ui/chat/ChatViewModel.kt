@@ -54,6 +54,7 @@ data class ChatUiState(
     val hasWorkingDirectory: Boolean = false,
     val conversationMode: ConversationMode = ConversationMode.GENERAL,
     val scopedFolderName: String? = null,
+    val scopedFolderUri: String? = null,
 )
 
 @HiltViewModel
@@ -73,7 +74,6 @@ class ChatViewModel @Inject constructor(
 
     private var agentJob: Job? = null
     private val conversationId: String? = savedStateHandle["conversationId"]
-    private val navMode: String? = savedStateHandle["mode"]
     private val navFolderUri: String? = savedStateHandle["folderUri"]
     private val navFolderName: String? = savedStateHandle["folderName"]
 
@@ -87,17 +87,27 @@ class ChatViewModel @Inject constructor(
 
             _uiState.update { it.copy(providerConfig = config, hasWorkingDirectory = hasDir) }
 
-            // Load existing conversation and its mode
+            // Load existing conversation and restore its folder scope (if any).
             if (conversationId != null) {
                 val messages = conversationRepository.getMessages(conversationId)
-                _uiState.update { it.copy(messages = messages, conversationId = conversationId) }
+                val conv = conversationRepository.getConversation(conversationId)
+                _uiState.update {
+                    it.copy(
+                        messages = messages,
+                        conversationId = conversationId,
+                        conversationMode = conv?.mode ?: it.conversationMode,
+                        scopedFolderName = conv?.scopedFolderName,
+                        scopedFolderUri = conv?.scopedFolderUri,
+                    )
+                }
             }
 
-            // Apply mode from nav args
-            if (navMode == "folder" && navFolderUri != null) {
+            // Apply folder scope from nav args for NEW conversations only (no conversationId).
+            if (conversationId == null && navFolderUri != null) {
                 _uiState.update { it.copy(
                     conversationMode = ConversationMode.FOLDER,
                     scopedFolderName = navFolderName,
+                    scopedFolderUri = navFolderUri,
                 ) }
             }
         }
@@ -111,13 +121,16 @@ class ChatViewModel @Inject constructor(
 
         viewModelScope.launch {
             // Create conversation if needed
-            val mode = _uiState.value.conversationMode
-            val convId = _uiState.value.conversationId ?: run {
+            val state = _uiState.value
+            val mode = state.conversationMode
+            val folderUri = state.scopedFolderUri
+            val folderName = state.scopedFolderName
+            val convId = state.conversationId ?: run {
                 val conv = conversationRepository.createConversation(
                     providerConfigId = config.id,
                     mode = mode,
-                    scopedFolderUri = navFolderUri,
-                    scopedFolderName = navFolderName,
+                    scopedFolderUri = folderUri,
+                    scopedFolderName = folderName,
                 )
                 _uiState.update { it.copy(conversationId = conv.id) }
                 conv.id
@@ -150,8 +163,8 @@ class ChatViewModel @Inject constructor(
 
             // Build LLM messages from conversation
             val baseSystemPrompt = settingsRepository.observeSystemPrompt().firstOrNull() ?: ""
-            val systemPrompt = if (mode == ConversationMode.FOLDER && navFolderName != null) {
-                "$baseSystemPrompt\n\nIMPORTANT: You are operating in FOLDER MODE, scoped to the directory: $navFolderName\n" +
+            val systemPrompt = if (mode == ConversationMode.FOLDER && folderName != null) {
+                "$baseSystemPrompt\n\nIMPORTANT: You are operating in FOLDER MODE, scoped to the directory: $folderName\n" +
                 "- All file operations (read, write, list, delete) MUST be within this directory only.\n" +
                 "- Do NOT access files outside this directory.\n" +
                 "- Paths are relative to this directory root.\n" +

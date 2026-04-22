@@ -25,6 +25,9 @@ interface ConversationDao {
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun deleteById(id: String)
 
+    @Query("DELETE FROM conversations WHERE scopedFolderUri = :uri")
+    suspend fun deleteByFolderUri(uri: String)
+
     @Query("UPDATE conversations SET title = :title, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateTitle(id: String, title: String, updatedAt: Long)
 }

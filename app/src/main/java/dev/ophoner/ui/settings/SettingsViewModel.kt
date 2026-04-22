@@ -70,6 +70,15 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun updateProvider(config: ProviderConfig) {
+        viewModelScope.launch {
+            val updated = _uiState.value.providers.map {
+                if (it.id == config.id) config else it
+            }
+            settingsRepository.saveProviders(updated)
+        }
+    }
+
     fun deleteProvider(id: String) {
         viewModelScope.launch {
             val updated = _uiState.value.providers.filter { it.id != id }

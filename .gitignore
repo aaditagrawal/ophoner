@@ -1,0 +1,44 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# Android
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+.navigation/
+captures/
+
+# Signing — never commit
+keystore.properties
+*.jks
+*.keystore
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+.kotlin/
+
+# Logs / local outputs
+*.log
+*.hprof
+shell_audit.log
+
+# OS
+Thumbs.db
+
+# User-generated schema exports (keep the folder in git once populated if desired)
+# app/schemas/

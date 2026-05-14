@@ -38,4 +38,11 @@ sealed interface ContentBlock {
         val output: String,
         val isError: Boolean = false,
     ) : ContentBlock
+
+    /** Optional per-message stats appended on completion. UI-only — never replayed to the LLM. */
+    @Serializable
+    data class Stats(
+        val outputChars: Int,
+        val durationMs: Long,
+    ) : ContentBlock
 }

@@ -29,6 +29,9 @@ class SettingsRepository @Inject constructor(
     private val workingDirKey = stringPreferencesKey("working_directory_uri")
     private val systemPromptKey = stringPreferencesKey("system_prompt")
     private val pinnedFoldersKey = stringPreferencesKey("pinned_folders")
+    private val themeModeKey = stringPreferencesKey("theme_mode")
+    private val uiFontKey = stringPreferencesKey("ui_font")
+    private val accentKey = stringPreferencesKey("accent_color")
 
     private val prettyJson = Json {
         prettyPrint = true
@@ -50,6 +53,30 @@ class SettingsRepository @Inject constructor(
 
     fun observeSystemPrompt(): Flow<String> = context.dataStore.data.map { prefs ->
         prefs[systemPromptKey] ?: "You are Ophoner, an AI agent running on an Android device. You have tools to read/write files, execute shell commands, and search the web. Use them to help the user accomplish tasks on their phone."
+    }
+
+    fun observeThemeMode(): Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[themeModeKey] ?: "SYSTEM"
+    }
+
+    fun observeUiFont(): Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[uiFontKey] ?: "GEIST_SANS"
+    }
+
+    fun observeAccent(): Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[accentKey] ?: "BLUE"
+    }
+
+    suspend fun setThemeMode(mode: String) {
+        context.dataStore.edit { prefs -> prefs[themeModeKey] = mode }
+    }
+
+    suspend fun setUiFont(font: String) {
+        context.dataStore.edit { prefs -> prefs[uiFontKey] = font }
+    }
+
+    suspend fun setAccent(accent: String) {
+        context.dataStore.edit { prefs -> prefs[accentKey] = accent }
     }
 
     suspend fun saveProviders(providers: List<ProviderConfig>) {

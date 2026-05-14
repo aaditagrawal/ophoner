@@ -11,6 +11,9 @@ import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.repository.SettingsRepository
 import dev.ophoner.tools.sandbox.SandboxedShell
 import dev.ophoner.tools.sandbox.ShizukuStatus
+import dev.ophoner.ui.theme.AccentChoice
+import dev.ophoner.ui.theme.ThemeMode
+import dev.ophoner.ui.theme.UiFont
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +29,9 @@ data class SettingsUiState(
     val workingDirDisplay: String? = null,
     val importExportMessage: String? = null,
     val shizukuStatus: ShizukuStatus = ShizukuStatus.NOT_INSTALLED,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val uiFont: UiFont = UiFont.GEIST_SANS,
+    val accent: AccentChoice = AccentChoice.BLUE,
 )
 
 @HiltViewModel
@@ -42,11 +48,25 @@ class SettingsViewModel @Inject constructor(
         refreshShizukuStatus()
 
         viewModelScope.launch {
+            val appearance = combine(
+                settingsRepository.observeThemeMode(),
+                settingsRepository.observeUiFont(),
+                settingsRepository.observeAccent(),
+            ) { themeRaw, fontRaw, accentRaw ->
+                Triple(
+                    runCatching { ThemeMode.valueOf(themeRaw) }.getOrDefault(ThemeMode.SYSTEM),
+                    runCatching { UiFont.valueOf(fontRaw) }.getOrDefault(UiFont.GEIST_SANS),
+                    runCatching { AccentChoice.valueOf(accentRaw) }.getOrDefault(AccentChoice.BLUE),
+                )
+            }
+
             combine(
                 settingsRepository.observeProviders(),
                 settingsRepository.observeActiveProviderId(),
                 settingsRepository.observeWorkingDirectoryUri(),
-            ) { providers, activeId, dirUri ->
+                appearance,
+            ) { providers, activeId, dirUri, appearancePrefs ->
+                val (themeMode, uiFont, accent) = appearancePrefs
                 _uiState.value.copy(
                     providers = providers,
                     activeProviderId = activeId,
@@ -54,6 +74,9 @@ class SettingsViewModel @Inject constructor(
                     workingDirDisplay = dirUri?.let { uri ->
                         Uri.parse(uri).lastPathSegment?.replace("primary:", "/")
                     },
+                    themeMode = themeMode,
+                    uiFont = uiFont,
+                    accent = accent,
                 )
             }.collect { state -> _uiState.value = state }
         }
@@ -134,6 +157,18 @@ class SettingsViewModel @Inject constructor(
 
     fun clearImportExportMessage() {
         _uiState.update { it.copy(importExportMessage = null) }
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch { settingsRepository.setThemeMode(mode.name) }
+    }
+
+    fun setUiFont(font: UiFont) {
+        viewModelScope.launch { settingsRepository.setUiFont(font.name) }
+    }
+
+    fun setAccent(accent: AccentChoice) {
+        viewModelScope.launch { settingsRepository.setAccent(accent.name) }
     }
 
     fun refreshShizukuStatus() {

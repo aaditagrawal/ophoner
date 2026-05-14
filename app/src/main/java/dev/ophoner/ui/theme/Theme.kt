@@ -7,78 +7,129 @@ import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary = AccentGreen,
-    onPrimary = DarkBackground,
-    primaryContainer = AccentGreen.copy(alpha = 0.15f),
-    onPrimaryContainer = AccentGreen,
-    secondary = AccentBlue,
-    onSecondary = DarkBackground,
-    secondaryContainer = AccentBlue.copy(alpha = 0.15f),
-    onSecondaryContainer = AccentBlue,
+enum class ThemeMode(val displayName: String) {
+    SYSTEM("System"),
+    LIGHT("Light"),
+    DARK("Dark");
+}
+
+/** Exposes whether we're rendering in dark theme so other surfaces can tone themselves. */
+val LocalIsDark = compositionLocalOf { false }
+
+/** The active accent color (already resolved for the current theme mode). */
+val LocalAccent = compositionLocalOf { Color(0xFF007AFF) }
+
+@Composable
+@ReadOnlyComposable
+fun isDarkTheme(): Boolean = LocalIsDark.current
+
+@Composable
+@ReadOnlyComposable
+fun accentColor(): Color = LocalAccent.current
+
+private fun buildDarkScheme(accent: Color) = darkColorScheme(
+    primary = accent,
+    onPrimary = Color.White,
+    primaryContainer = accent.copy(alpha = 0.18f),
+    onPrimaryContainer = accent,
+    secondary = AccentGreen,
+    onSecondary = Color.White,
+    secondaryContainer = AccentGreen.copy(alpha = 0.18f),
+    onSecondaryContainer = AccentGreen,
     tertiary = AccentAmber,
-    onTertiary = DarkBackground,
+    onTertiary = Color.Black,
     background = DarkBackground,
     onBackground = TextPrimary,
-    surface = DarkSurface,
+    surface = DarkBackground,
     onSurface = TextPrimary,
     surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = TextSecondary,
+    surfaceContainerLowest = DarkBackground,
+    surfaceContainerLow = DarkSurface,
+    surfaceContainer = DarkSurface,
+    surfaceContainerHigh = DarkSurfaceVariant,
+    surfaceContainerHighest = DarkSurfaceVariant,
     outline = DarkBorder,
     outlineVariant = DarkMuted,
     error = AccentRed,
-    onError = TextPrimary,
+    onError = Color.White,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = AccentGreen,
-    onPrimary = LightBackground,
-    primaryContainer = AccentGreen.copy(alpha = 0.1f),
-    onPrimaryContainer = AccentGreen,
-    secondary = AccentBlue,
-    onSecondary = LightBackground,
-    secondaryContainer = AccentBlue.copy(alpha = 0.1f),
-    onSecondaryContainer = AccentBlue,
-    tertiary = AccentAmber,
-    onTertiary = LightBackground,
+private fun buildLightScheme(accent: Color) = lightColorScheme(
+    primary = accent,
+    onPrimary = Color.White,
+    primaryContainer = accent.copy(alpha = 0.12f),
+    onPrimaryContainer = accent,
+    secondary = LightAccentGreen,
+    onSecondary = Color.White,
+    secondaryContainer = LightAccentGreen.copy(alpha = 0.12f),
+    onSecondaryContainer = LightAccentGreen,
+    tertiary = LightAccentAmber,
+    onTertiary = Color.White,
     background = LightBackground,
     onBackground = LightTextPrimary,
-    surface = LightSurface,
+    surface = LightBackground,
     onSurface = LightTextPrimary,
     surfaceVariant = LightSurfaceVariant,
     onSurfaceVariant = LightTextSecondary,
+    surfaceContainerLowest = LightBackground,
+    surfaceContainerLow = LightSurface,
+    surfaceContainer = LightSurface,
+    surfaceContainerHigh = LightSurfaceVariant,
+    surfaceContainerHighest = LightSurfaceVariant,
     outline = LightBorder,
     outlineVariant = LightMuted,
-    error = AccentRed,
-    onError = LightBackground,
+    error = LightAccentRed,
+    onError = Color.White,
 )
 
 @Composable
 fun OphoneTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    uiFont: UiFont = UiFont.GEIST_SANS,
+    accent: AccentChoice = AccentChoice.BLUE,
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val systemDark = isSystemInDarkTheme()
+    val darkTheme = when (themeMode) {
+        ThemeMode.SYSTEM -> systemDark
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+    val accentColor = accent.color(darkTheme)
+    val colorScheme = if (darkTheme) buildDarkScheme(accentColor) else buildLightScheme(accentColor)
 
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = !darkTheme
-                isAppearanceLightNavigationBars = !darkTheme
-            }
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
+            window.statusBarColor = Color.Transparent.toArgb()
+            window.navigationBarColor = Color.Transparent.toArgb()
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = !darkTheme
+            controller.isAppearanceLightNavigationBars = !darkTheme
         }
     }
 
-    MaterialExpressiveTheme(
-        colorScheme = colorScheme,
-        motionScheme = MotionScheme.expressive(),
-        typography = OphoneTypography,
-        content = content,
-    )
+    CompositionLocalProvider(
+        LocalMonoFontFamily provides GeistMono,
+        LocalIsDark provides darkTheme,
+        LocalAccent provides accentColor,
+    ) {
+        MaterialExpressiveTheme(
+            colorScheme = colorScheme,
+            motionScheme = MotionScheme.expressive(),
+            typography = ophoneTypography(uiFont.toFontFamily()),
+            content = content,
+        )
+    }
 }

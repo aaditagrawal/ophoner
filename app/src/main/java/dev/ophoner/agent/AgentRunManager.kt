@@ -9,6 +9,7 @@ import dev.ophoner.data.repository.ConversationRepository
 import dev.ophoner.di.ApplicationScope
 import dev.ophoner.llm.LlmMessage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -48,7 +50,7 @@ class AgentRunManager @Inject constructor(
     private val _runs = MutableStateFlow<Map<String, AgentRunState>>(emptyMap())
     val runs = _runs.asStateFlow()
 
-    private val jobs = mutableMapOf<String, Job>()
+    private val jobs = ConcurrentHashMap<String, Job>()
 
     fun observeRun(conversationId: String): Flow<AgentRunState?> =
         runs.map { it[conversationId] }.distinctUntilChanged()
@@ -58,7 +60,9 @@ class AgentRunManager @Inject constructor(
         conversationMessages: List<LlmMessage>,
         config: ProviderConfig,
     ) {
-        if (jobs[conversationId]?.isActive == true) return
+        val existingJob = jobs[conversationId]
+        if (existingJob?.isActive == true) return
+        if (existingJob != null) jobs.remove(conversationId, existingJob)
 
         _runs.update {
             it + (conversationId to AgentRunState(
@@ -67,7 +71,8 @@ class AgentRunManager @Inject constructor(
             ))
         }
 
-        jobs[conversationId] = applicationScope.launch {
+        lateinit var job: Job
+        job = applicationScope.launch(start = CoroutineStart.LAZY) {
             val streamedText = StringBuilder()
             var streamStartedAt: Long? = null
 
@@ -208,10 +213,23 @@ class AgentRunManager @Inject constructor(
                     )
                 }
             } finally {
-                jobs.remove(conversationId)
+                jobs.remove(conversationId, job)
                 updateRun(conversationId) { it.copy(isRunning = false) }
             }
         }
+
+        val previousJob = jobs.putIfAbsent(conversationId, job)
+        if (previousJob?.isActive == true) {
+            job.cancel()
+            return
+        }
+        if (previousJob != null) {
+            if (!jobs.replace(conversationId, previousJob, job)) {
+                job.cancel()
+                return
+            }
+        }
+        job.start()
     }
 
     fun cancelRun(conversationId: String?) {

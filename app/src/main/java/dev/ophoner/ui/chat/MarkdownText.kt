@@ -25,12 +25,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.ophoner.ui.theme.ChatPalette
 import dev.ophoner.ui.theme.chatPalette
 import dev.ophoner.ui.theme.monoFamily
 
@@ -43,6 +45,7 @@ fun MarkdownText(
     val blocks = remember(text) { parseMarkdownBlocks(text) }
     val palette = chatPalette()
     val mono = monoFamily()
+    val inlineStyle = palette.inlineStyle(mono)
 
     Column(modifier = modifier) {
         for ((i, block) in blocks.withIndex()) {
@@ -54,7 +57,7 @@ fun MarkdownText(
                         else -> MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
                     }
                     Text(
-                        text = parseInlineMarkdown(block.text, mono, palette.codeBlockBg, palette.codeText, palette.mathBg, palette.mathText),
+                        text = parseInlineMarkdown(block.text, inlineStyle),
                         style = style,
                         color = color,
                     )
@@ -108,7 +111,7 @@ fun MarkdownText(
                 }
                 is MdBlock.Paragraph -> {
                     Text(
-                        text = parseInlineMarkdown(block.text, mono, palette.codeBlockBg, palette.codeText, palette.mathBg, palette.mathText),
+                        text = parseInlineMarkdown(block.text, inlineStyle),
                         style = MaterialTheme.typography.bodyMedium,
                         color = color,
                     )
@@ -127,6 +130,7 @@ private fun MdTable(
 ) {
     val palette = chatPalette()
     val mono = monoFamily()
+    val inlineStyle = palette.inlineStyle(mono)
     val borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
     val columnWidths = remember(headers, rows) { tableColumnWidths(headers, rows) }
 
@@ -148,7 +152,7 @@ private fun MdTable(
             ) {
                 for ((colIndex, header) in normalizedTableRow(headers, columnWidths.size).withIndex()) {
                     Text(
-                        text = parseInlineMarkdown(header, mono, palette.codeBlockBg, palette.codeText, palette.mathBg, palette.mathText),
+                        text = parseInlineMarkdown(header, inlineStyle),
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = color,
                         modifier = Modifier
@@ -169,7 +173,7 @@ private fun MdTable(
                 ) {
                     for ((colIndex, cell) in normalizedTableRow(row, columnWidths.size).withIndex()) {
                         Text(
-                            text = parseInlineMarkdown(cell, mono, palette.codeBlockBg, palette.codeText, palette.mathBg, palette.mathText),
+                            text = parseInlineMarkdown(cell, inlineStyle),
                             style = MaterialTheme.typography.labelMedium,
                             color = color.copy(alpha = 0.85f),
                             modifier = Modifier
@@ -320,13 +324,26 @@ private fun parseMarkdownBlocks(text: String): List<MdBlock> {
     return blocks
 }
 
+private data class InlineStyle(
+    val monoFamily: FontFamily,
+    val codeBg: Color,
+    val codeText: Color,
+    val mathBg: Color,
+    val mathText: Color,
+)
+
+private fun ChatPalette.inlineStyle(monoFamily: FontFamily): InlineStyle =
+    InlineStyle(
+        monoFamily = monoFamily,
+        codeBg = codeBlockBg,
+        codeText = codeText,
+        mathBg = mathBg,
+        mathText = mathText,
+    )
+
 private fun parseInlineMarkdown(
     text: String,
-    monoFamily: androidx.compose.ui.text.font.FontFamily,
-    codeBg: Color,
-    codeText: Color,
-    mathBg: Color,
-    mathText: Color,
+    style: InlineStyle,
 ): AnnotatedString {
     return buildAnnotatedString {
         var remaining = text
@@ -395,17 +412,17 @@ private fun parseInlineMarkdown(
                     append(content)
                 }
                 "code" -> withStyle(SpanStyle(
-                    fontFamily = monoFamily,
-                    background = codeBg,
-                    color = codeText,
+                    fontFamily = style.monoFamily,
+                    background = style.codeBg,
+                    color = style.codeText,
                     fontSize = 13.sp,
                 )) {
                     append(content)
                 }
                 "math" -> withStyle(SpanStyle(
-                    fontFamily = monoFamily,
-                    background = mathBg,
-                    color = mathText,
+                    fontFamily = style.monoFamily,
+                    background = style.mathBg,
+                    color = style.mathText,
                     fontSize = 13.sp,
                 )) {
                     append(content)

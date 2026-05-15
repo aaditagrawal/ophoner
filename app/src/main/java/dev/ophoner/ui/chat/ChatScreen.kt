@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -114,7 +115,12 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(uiState.messages.size, uiState.activeToolCalls.size, uiState.isAgentRunning) {
+    LaunchedEffect(
+        uiState.messages.size,
+        uiState.streamingText,
+        uiState.activeToolCalls.size,
+        uiState.isAgentRunning,
+    ) {
         if (uiState.messages.isNotEmpty() || uiState.streamingText.isNotEmpty()) {
             listState.scrollToItem(maxOf(0, listState.layoutInfo.totalItemsCount - 1))
         }
@@ -604,12 +610,13 @@ private fun InputBar(
     var text by rememberSaveable { mutableStateOf("") }
     var isFocused by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
 
     val isExpanded by remember(text, isFocused) {
         derivedStateOf { isFocused || text.isNotBlank() }
     }
 
-    BackHandler(enabled = isExpanded) { isFocused = false }
+    BackHandler(enabled = isExpanded) { focusManager.clearFocus() }
 
     val verticalPadding by animateDpAsState(
         targetValue = if (isExpanded) 16.dp else 12.dp,
@@ -657,7 +664,7 @@ private fun InputBar(
                 ),
         ) {
             if (isExpanded) {
-                ExpandedComposerHeader(onCollapse = { isFocused = false })
+                ExpandedComposerHeader(onCollapse = { focusManager.clearFocus() })
             }
 
             Row(
@@ -724,7 +731,7 @@ private fun InputBar(
                             if (canSend) {
                                 onSend(text.trim())
                                 text = ""
-                                isFocused = false
+                                focusManager.clearFocus()
                             }
                         },
                         enabled = canSend,

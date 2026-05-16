@@ -1,20 +1,22 @@
 package dev.ophoner.ui.settings
 
-import android.app.Activity
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,21 +27,28 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.ColorLens
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -57,8 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -70,6 +78,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.model.ProviderType
 import dev.ophoner.tools.sandbox.ShizukuStatus
+import dev.ophoner.ui.theme.AccentChoice
+import dev.ophoner.ui.theme.ThemeMode
+import dev.ophoner.ui.theme.UiFont
+import dev.ophoner.ui.theme.isDarkTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,7 +112,6 @@ fun SettingsScreen(
         uri?.let { viewModel.importProviders(it) }
     }
 
-    // Show snackbar when import/export message is set
     LaunchedEffect(uiState.importExportMessage) {
         uiState.importExportMessage?.let { msg ->
             snackbarHostState.showSnackbar(msg)
@@ -114,7 +125,7 @@ fun SettingsScreen(
                 title = {
                     Text(
                         "Settings",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleLarge,
                     )
                 },
                 navigationIcon = {
@@ -134,137 +145,112 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
         ) {
-            // Providers section
-            SectionHeader("LLM Providers")
+            Spacer(Modifier.height(8.dp))
 
-            for (provider in uiState.providers) {
-                ProviderCard(
-                    config = provider,
-                    isActive = provider.id == uiState.activeProviderId,
-                    onSetActive = { viewModel.setActiveProvider(provider.id) },
-                    onEdit = { editingProviderId = provider.id },
-                    onDelete = { viewModel.deleteProvider(provider.id) },
+            // Appearance
+            SectionHeader("Appearance")
+            GroupedList {
+                ThemeRow(
+                    selected = uiState.themeMode,
+                    onSelect = viewModel::setThemeMode,
                 )
-                Spacer(Modifier.height(8.dp))
+                Separator()
+                AccentRow(
+                    selected = uiState.accent,
+                    onSelect = viewModel::setAccent,
+                )
+                Separator()
+                FontRow(
+                    selected = uiState.uiFont,
+                    onSelect = viewModel::setUiFont,
+                )
             }
 
-            TextButton(
-                onClick = { showAddProvider = true },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Add Provider")
+            Spacer(Modifier.height(24.dp))
+
+            // Providers
+            SectionHeader("LLM Providers")
+            if (uiState.providers.isNotEmpty()) {
+                GroupedList {
+                    uiState.providers.forEachIndexed { index, provider ->
+                        ProviderRow(
+                            config = provider,
+                            isActive = provider.id == uiState.activeProviderId,
+                            onSetActive = { viewModel.setActiveProvider(provider.id) },
+                            onEdit = { editingProviderId = provider.id },
+                            onDelete = { viewModel.deleteProvider(provider.id) },
+                        )
+                        if (index < uiState.providers.lastIndex) Separator()
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
             }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TextButton(
-                    onClick = { exportLauncher.launch("ophoner_providers.json") },
-                    enabled = uiState.providers.isNotEmpty(),
-                ) {
-                    Text("Export Providers")
-                }
-                TextButton(
+                PillButton(
+                    text = "Add",
+                    icon = Icons.Outlined.Add,
+                    onClick = { showAddProvider = true },
+                    modifier = Modifier.weight(1f),
+                )
+                PillButton(
+                    text = "Import",
+                    icon = Icons.Outlined.Download,
                     onClick = { importLauncher.launch(arrayOf("application/json")) },
-                ) {
-                    Text("Import Providers")
-                }
+                    modifier = Modifier.weight(1f),
+                )
+                PillButton(
+                    text = "Export",
+                    icon = Icons.Outlined.Upload,
+                    onClick = { exportLauncher.launch("ophoner_providers.json") },
+                    modifier = Modifier.weight(1f),
+                    enabled = uiState.providers.isNotEmpty(),
+                )
             }
+            HelperText("Backup or move your providers between devices.")
 
             Spacer(Modifier.height(24.dp))
 
             // Working directory
-            SectionHeader("Working Directory")
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { dirPickerLauncher.launch(null) }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Default.FolderOpen,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+            SectionHeader("File Access")
+            GroupedList {
+                ChevronRow(
+                    leading = Icons.Outlined.FolderOpen,
+                    title = "Working Directory",
+                    subtitle = uiState.workingDirDisplay ?: "Tap to select a folder",
+                    onClick = { dirPickerLauncher.launch(null) },
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "File Access Directory",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    )
-                    Text(
-                        uiState.workingDirDisplay ?: "Tap to select a folder",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
 
             Spacer(Modifier.height(24.dp))
 
-            // Shizuku section
-            SectionHeader("Shell Privileges (Shizuku)")
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val statusColor = when (uiState.shizukuStatus) {
-                    ShizukuStatus.CONNECTED -> MaterialTheme.colorScheme.primary
-                    ShizukuStatus.PERMISSION_NEEDED -> MaterialTheme.colorScheme.error
-                    ShizukuStatus.NOT_RUNNING -> MaterialTheme.colorScheme.outline
-                    ShizukuStatus.NOT_INSTALLED -> MaterialTheme.colorScheme.outline
-                }
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(statusColor),
+            // Shizuku
+            SectionHeader("Shell Privileges")
+            GroupedList {
+                ShizukuRow(
+                    status = uiState.shizukuStatus,
+                    onGrant = viewModel::requestShizukuPermission,
+                    onRefresh = viewModel::refreshShizukuStatus,
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Shizuku: ${uiState.shizukuStatus.displayLabel}",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    )
-                    Text(
-                        when (uiState.shizukuStatus) {
-                            ShizukuStatus.CONNECTED -> "Shell commands run with ADB-level privileges"
-                            ShizukuStatus.PERMISSION_NEEDED -> "Tap Grant to allow privileged shell access"
-                            ShizukuStatus.NOT_RUNNING -> "Start Shizuku app for ADB-level shell access"
-                            ShizukuStatus.NOT_INSTALLED -> "Install Shizuku for ADB-level shell access"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (uiState.shizukuStatus == ShizukuStatus.PERMISSION_NEEDED) {
-                    TextButton(onClick = {
-                        viewModel.requestShizukuPermission()
-                    }) {
-                        Text("Grant")
-                    }
-                }
-                TextButton(onClick = { viewModel.refreshShizukuStatus() }) {
-                    Text("Refresh")
-                }
             }
+            HelperText(
+                when (uiState.shizukuStatus) {
+                    ShizukuStatus.CONNECTED -> "Shell commands run with ADB-level privileges."
+                    ShizukuStatus.PERMISSION_NEEDED -> "Tap Grant to allow privileged shell access."
+                    ShizukuStatus.NOT_RUNNING -> "Start the Shizuku app for ADB-level shell access."
+                    ShizukuStatus.NOT_INSTALLED -> "Install Shizuku for ADB-level shell access."
+                }
+            )
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(40.dp))
         }
     }
 
@@ -299,18 +285,314 @@ fun SettingsScreen(
 @Composable
 private fun SectionHeader(title: String) {
     Text(
-        title.uppercase(),
+        text = title.uppercase(),
         style = MaterialTheme.typography.labelMedium.copy(
-            letterSpacing = 1.5.sp,
+            letterSpacing = 0.6.sp,
             fontWeight = FontWeight.SemiBold,
         ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-        modifier = Modifier.padding(vertical = 12.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
     )
 }
 
 @Composable
-private fun ProviderCard(
+private fun HelperText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
+    )
+}
+
+@Composable
+private fun GroupedList(content: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun Separator() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 52.dp),
+        thickness = 0.5.dp,
+        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+    )
+}
+
+@Composable
+private fun ChevronRow(
+    leading: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String?,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            leading,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun ThemeRow(
+    selected: ThemeMode,
+    onSelect: (ThemeMode) -> Unit,
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.Palette,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Text(
+                "Theme",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        SegmentedControl(
+            options = ThemeMode.entries,
+            selected = selected,
+            onSelect = onSelect,
+            label = { it.displayName },
+        )
+    }
+}
+
+@Composable
+private fun AccentRow(
+    selected: AccentChoice,
+    onSelect: (AccentChoice) -> Unit,
+) {
+    val dark = isDarkTheme()
+    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.ColorLens,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Text(
+                "Accent",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                selected.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            for (choice in AccentChoice.entries) {
+                AccentSwatchDot(
+                    color = choice.color(dark),
+                    isSelected = choice == selected,
+                    onClick = { onSelect(choice) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccentSwatchDot(
+    color: Color,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(if (isSelected) 22.dp else 24.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .border(2.dp, color, CircleShape),
+            )
+        }
+    }
+}
+
+@Composable
+private fun FontRow(
+    selected: UiFont,
+    onSelect: (UiFont) -> Unit,
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.TextFields,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Text(
+                "Interface Font",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        SegmentedControl(
+            options = UiFont.entries,
+            selected = selected,
+            onSelect = onSelect,
+            label = { it.displayName },
+        )
+    }
+}
+
+@Composable
+private fun <T : Any> SegmentedControl(
+    options: List<T>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    label: (T) -> String,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(2.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            for (opt in options) {
+                val isSelected = opt == selected
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.surface
+                            else Color.Transparent
+                        )
+                        .clickable { onSelect(opt) }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label(opt),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isSelected) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PillButton(
+    text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (enabled) MaterialTheme.colorScheme.surfaceContainerLow
+                else MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (enabled) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+        )
+    }
+}
+
+@Composable
+private fun ProviderRow(
     config: ProviderConfig,
     isActive: Boolean,
     onSetActive: () -> Unit,
@@ -320,70 +602,102 @@ private fun ProviderCard(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (isActive) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceVariant
-            )
-            .clickable { onSetActive() }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .clickable(onClick = onSetActive)
+            .padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (isActive) {
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .then(
+                    if (isActive) Modifier.background(MaterialTheme.colorScheme.primary)
+                    else Modifier.border(
+                        1.5.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                        CircleShape,
+                    )
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isActive) {
                 Icon(
-                    Icons.Default.Check,
+                    Icons.Outlined.Check,
                     contentDescription = "Active",
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(14.dp),
                 )
             }
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-            )
         }
-
-        Spacer(Modifier.width(12.dp))
-
+        Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 config.displayName,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "${config.providerType.name} | ${config.modelId.split("/").lastOrNull() ?: config.modelId}",
+                "${config.providerType.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }} · ${config.modelId.split("/").lastOrNull() ?: config.modelId}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
         }
-
-        IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
             Icon(
-                Icons.Default.Edit,
+                Icons.Outlined.Edit,
                 contentDescription = "Edit",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                 modifier = Modifier.size(18.dp),
             )
         }
-
-        IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
             Icon(
-                Icons.Default.Delete,
+                Icons.Outlined.Delete,
                 contentDescription = "Delete",
-                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
+                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
                 modifier = Modifier.size(18.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun ShizukuRow(
+    status: ShizukuStatus,
+    onGrant: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val color = when (status) {
+            ShizukuStatus.CONNECTED -> MaterialTheme.colorScheme.secondary
+            ShizukuStatus.PERMISSION_NEEDED -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.outline
+        }
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        Spacer(Modifier.width(14.dp))
+        Text(
+            "Shizuku · ${status.displayLabel}",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        if (status == ShizukuStatus.PERMISSION_NEEDED) {
+            TextButton(onClick = onGrant) {
+                Text("Grant")
+            }
+        }
+        TextButton(onClick = onRefresh) { Text("Refresh") }
     }
 }
 
@@ -419,7 +733,6 @@ private fun ProviderDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                // Provider type dropdown
                 ExposedDropdownMenuBox(
                     expanded = typeExpanded,
                     onExpandedChange = { typeExpanded = it },
@@ -442,7 +755,6 @@ private fun ProviderDialog(
                                 onClick = {
                                     selectedType = type
                                     typeExpanded = false
-                                    // Auto-fill base URL
                                     baseUrl = when (type) {
                                         ProviderType.CLAUDE -> "https://api.anthropic.com"
                                         ProviderType.OPENAI -> "https://api.openai.com/v1"
@@ -461,7 +773,7 @@ private fun ProviderDialog(
                     label = { Text("API Key") },
                     singleLine = true,
                     visualTransformation = if (showApiKey) VisualTransformation.None
-                        else PasswordVisualTransformation(),
+                    else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     trailingIcon = {
                         TextButton(onClick = { showApiKey = !showApiKey }) {

@@ -1,13 +1,21 @@
 package dev.ophoner.ui.chat
 
-import kotlinx.serialization.json.jsonObject
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,14 +23,17 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,31 +41,32 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
-import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,8 +75,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import dev.ophoner.ui.theme.GeistMono
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -72,14 +91,18 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ophoner.data.model.ContentBlock
+import dev.ophoner.data.model.Message
 import dev.ophoner.data.model.MessageRole
 import dev.ophoner.ui.theme.AccentAmber
+import dev.ophoner.ui.theme.AccentBackdrop
 import dev.ophoner.ui.theme.AccentGreen
 import dev.ophoner.ui.theme.AccentRed
-import dev.ophoner.ui.theme.AssistantBubble
-import dev.ophoner.ui.theme.ToolCardBg
-import dev.ophoner.ui.theme.ToolCardBorder
-import dev.ophoner.ui.theme.UserBubble
+import dev.ophoner.ui.theme.chatPalette
+import dev.ophoner.ui.theme.monoFamily
+import kotlinx.serialization.json.jsonObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,14 +115,17 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Auto-scroll to bottom on new content
-    LaunchedEffect(uiState.messages.size, uiState.streamingText) {
+    LaunchedEffect(
+        uiState.messages.size,
+        uiState.streamingText,
+        uiState.activeToolCalls.size,
+        uiState.isAgentRunning,
+    ) {
         if (uiState.messages.isNotEmpty() || uiState.streamingText.isNotEmpty()) {
-            listState.animateScrollToItem(maxOf(0, listState.layoutInfo.totalItemsCount - 1))
+            listState.scrollToItem(maxOf(0, listState.layoutInfo.totalItemsCount - 1))
         }
     }
 
-    // Show errors
     LaunchedEffect(uiState.error) {
         uiState.error?.let {
             snackbarHostState.showSnackbar(it)
@@ -107,106 +133,139 @@ fun ChatScreen(
         }
     }
 
-    // Refresh provider when returning from settings
-    LaunchedEffect(Unit) {
-        viewModel.refreshProvider()
-    }
+    LaunchedEffect(Unit) { viewModel.refreshProvider() }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            TopAppBar(
-                title = {
-                    val folderName = uiState.scopedFolderName
-                    if (uiState.conversationMode == dev.ophoner.data.model.ConversationMode.FOLDER &&
-                        folderName != null
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.FolderOpen,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = folderName,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        // 1. Painted texture behind everything
+        AccentBackdrop()
+
+        // 2. Scaffold renders chat content + scrollable list, transparent so blobs read through.
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            containerColor = Color.Transparent,
+        ) { innerPadding ->
+            val layoutDirection = LocalLayoutDirection.current
+            val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding(),
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .consumeWindowInsets(innerPadding),
+                    contentPadding = PaddingValues(
+                        start = 16.dp + innerPadding.calculateLeftPadding(layoutDirection),
+                        end = 16.dp + innerPadding.calculateRightPadding(layoutDirection),
+                        top = statusBarTop + 56.dp,
+                        bottom = 110.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (uiState.messages.isEmpty() && !uiState.isAgentRunning) {
+                        item { EmptyState() }
+                    }
+
+                    items(uiState.messages, key = { it.id }) { message ->
+                        MessageItem(message)
+                    }
+
+                    if (uiState.streamingText.isNotEmpty() || uiState.activeToolCalls.isNotEmpty()) {
+                        item {
+                            StreamingResponse(
+                                text = uiState.streamingText,
+                                toolCalls = uiState.activeToolCalls,
                             )
                         }
                     }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onOpenConversations) {
-                        Icon(Icons.Default.Menu, contentDescription = "Conversations")
+
+                    if (uiState.isAgentRunning && uiState.streamingText.isEmpty() && uiState.activeToolCalls.isEmpty()) {
+                        item { ThinkingIndicator() }
                     }
-                },
-                actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                ),
+                }
+
+                // 3. Floating composer at the bottom — frosted glass
+                InputBar(
+                    isAgentRunning = uiState.isAgentRunning,
+                    hasProvider = uiState.providerConfig != null,
+                    onSend = { viewModel.sendMessage(it) },
+                    onCancel = { viewModel.cancelAgent() },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.navigationBars),
+                )
+            }
+        }
+
+        // 4. Floating top bar — frosted glass over the scroll
+        FrostedTopBar(
+            folderName = uiState.scopedFolderName?.takeIf {
+                uiState.conversationMode == dev.ophoner.data.model.ConversationMode.FOLDER
+            },
+            onOpenConversations = onOpenConversations,
+            onOpenSettings = onOpenSettings,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FrostedTopBar(
+    folderName: String?,
+    onOpenConversations: () -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val bg = MaterialTheme.colorScheme.background
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        bg.copy(alpha = 0.92f),
+                        bg.copy(alpha = 0.78f),
+                        bg.copy(alpha = 0.0f),
+                    ),
+                )
             )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .imePadding(),
-        ) {
-            // Messages
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 80.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // Empty state
-                if (uiState.messages.isEmpty() && !uiState.isAgentRunning) {
-                    item {
-                        EmptyState()
-                    }
-                }
-
-                // Messages
-                items(uiState.messages, key = { it.id }) { message ->
-                    MessageItem(message)
-                }
-
-                // Streaming response
-                if (uiState.streamingText.isNotEmpty() || uiState.activeToolCalls.isNotEmpty()) {
-                    item {
-                        StreamingResponse(
-                            text = uiState.streamingText,
-                            toolCalls = uiState.activeToolCalls,
+            .windowInsetsPadding(WindowInsets.statusBars),
+    ) {
+        TopAppBar(
+            title = {
+                if (folderName != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Outlined.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = folderName,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
                         )
                     }
                 }
-
-                // Thinking indicator
-                if (uiState.isAgentRunning && uiState.streamingText.isEmpty() && uiState.activeToolCalls.isEmpty()) {
-                    item {
-                        ThinkingIndicator()
-                    }
+            },
+            navigationIcon = {
+                IconButton(onClick = onOpenConversations) {
+                    Icon(Icons.Outlined.Menu, contentDescription = "Conversations")
                 }
-            }
-
-            // Floating input bar at the bottom
-            InputBar(
-                isAgentRunning = uiState.isAgentRunning,
-                hasProvider = uiState.providerConfig != null,
-                onSend = { viewModel.sendMessage(it) },
-                onCancel = { viewModel.cancelAgent() },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
-        }
+            },
+            actions = {
+                IconButton(onClick = onOpenSettings) {
+                    Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+        )
     }
 }
 
@@ -215,35 +274,32 @@ private fun EmptyState() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 60.dp),
+            .padding(vertical = 80.dp),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            androidx.compose.material3.Surface(
-                shape = MaterialShapes.Cookie9Sided.toShape(),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(84.dp),
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        "o",
-                        style = MaterialTheme.typography.displaySmall.copy(
-                            fontFamily = GeistMono,
-                            fontWeight = FontWeight.Bold,
-                        ),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
+                Text(
+                    "o",
+                    style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(20.dp))
             Text(
                 "Hey there",
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                "Ask me anything — I can browse, read files, run shell\ncommands, and more.",
+                "Ask anything — I can browse, read files, run shell\ncommands, and more.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -252,29 +308,27 @@ private fun EmptyState() {
 }
 
 @Composable
-private fun MessageItem(message: dev.ophoner.data.model.Message) {
+private fun MessageItem(message: Message) {
     val isUser = message.role == MessageRole.USER
+    val palette = chatPalette()
+    val context = LocalContext.current
+
+    val stats = remember(message.content) {
+        message.content.filterIsInstance<ContentBlock.Stats>().firstOrNull()
+    }
+    val visibleText = remember(message.content) {
+        message.content.filterIsInstance<ContentBlock.Text>().joinToString("\n\n") { it.text }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
     ) {
-        // Role label
-        Text(
-            text = if (isUser) "you" else "agent",
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontFamily = GeistMono,
-                fontWeight = FontWeight.Medium,
-            ),
-            color = if (isUser) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-        )
-
-        // Build a map of tool results by tool use id for pairing
-        val toolResults = message.content
-            .filterIsInstance<ContentBlock.ToolResult>()
-            .associateBy { it.toolUseId }
+        val toolResults = remember(message.content) {
+            message.content
+                .filterIsInstance<ContentBlock.ToolResult>()
+                .associateBy { it.toolUseId }
+        }
 
         for (block in message.content) {
             when (block) {
@@ -283,14 +337,14 @@ private fun MessageItem(message: dev.ophoner.data.model.Message) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(0.85f)
-                                .clip(RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp))
-                                .background(UserBubble)
+                                .clip(RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp))
+                                .background(palette.userBubble)
                                 .padding(horizontal = 14.dp, vertical = 10.dp),
                         ) {
                             Text(
                                 text = block.text,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
+                                color = palette.onUserBubble,
                             )
                         }
                     } else {
@@ -298,12 +352,11 @@ private fun MessageItem(message: dev.ophoner.data.model.Message) {
                             text = block.text,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                                .padding(horizontal = 2.dp, vertical = 2.dp),
                         )
                     }
                 }
                 is ContentBlock.ToolUse -> {
-                    // Pair with its result if available
                     val result = toolResults[block.id]
                     ToolCallCard(
                         name = block.name,
@@ -313,9 +366,79 @@ private fun MessageItem(message: dev.ophoner.data.model.Message) {
                         isError = result?.isError ?: false,
                     )
                 }
-                is ContentBlock.ToolResult -> {
-                    // Skip — already rendered paired with its ToolUse above
+                is ContentBlock.ToolResult, is ContentBlock.Stats -> {
+                    // Stats rendered in footer; ToolResult paired with its ToolUse above.
                 }
+            }
+        }
+
+        if (!isUser && (visibleText.isNotEmpty() || stats != null)) {
+            MessageFooter(
+                timestamp = message.createdAt,
+                stats = stats,
+                copyText = visibleText.takeIf { it.isNotBlank() },
+                onCopy = { text -> copyToClipboard(context, text) },
+                horizontalAlignment = Alignment.Start,
+            )
+        }
+        if (isUser) {
+            MessageFooter(
+                timestamp = message.createdAt,
+                stats = null,
+                copyText = null,
+                onCopy = {},
+                horizontalAlignment = Alignment.End,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageFooter(
+    timestamp: Long,
+    stats: ContentBlock.Stats?,
+    copyText: String?,
+    onCopy: (String) -> Unit,
+    horizontalAlignment: Alignment.Horizontal,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        horizontalArrangement = when (horizontalAlignment) {
+            Alignment.End -> Arrangement.End
+            else -> Arrangement.Start
+        },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val labelColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+        val parts = buildList {
+            add(formatClock(timestamp))
+            stats?.let {
+                val tokensPerSec = estimateTokensPerSecond(it.outputChars, it.durationMs)
+                if (tokensPerSec != null) add("${tokensPerSec} tok/s")
+            }
+        }
+        Text(
+            text = parts.joinToString(" · "),
+            style = MaterialTheme.typography.labelSmall,
+            color = labelColor,
+        )
+        if (copyText != null) {
+            Spacer(Modifier.width(6.dp))
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .clickable { onCopy(copyText) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.ContentCopy,
+                    contentDescription = "Copy message",
+                    tint = labelColor,
+                    modifier = Modifier.size(13.dp),
+                )
             }
         }
     }
@@ -330,17 +453,6 @@ private fun StreamingResponse(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start,
     ) {
-        Text(
-            text = "agent",
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontFamily = GeistMono,
-                fontWeight = FontWeight.Medium,
-            ),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-        )
-
-        // Tool calls
         for (tc in toolCalls) {
             ToolCallCard(
                 name = tc.name,
@@ -352,13 +464,12 @@ private fun StreamingResponse(
             Spacer(Modifier.height(4.dp))
         }
 
-        // Streaming text
         if (text.isNotEmpty()) {
             MarkdownText(
                 text = text,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                    .padding(horizontal = 2.dp, vertical = 2.dp),
             )
         }
     }
@@ -373,41 +484,43 @@ fun ToolCallCard(
     isError: Boolean,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val palette = chatPalette()
 
     Column(modifier = Modifier.padding(vertical = 2.dp)) {
-        // Compact single-line chip
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color(0xFF1A1A1A))
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.toolCardBg)
+                .border(0.5.dp, palette.toolCardBorder, RoundedCornerShape(10.dp))
                 .clickable { if (!isExecuting) expanded = !expanded }
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Status dot
             Box(
                 modifier = Modifier
-                    .size(5.dp)
+                    .size(6.dp)
                     .clip(CircleShape)
                     .background(
                         when {
                             isExecuting -> AccentAmber
                             isError -> AccentRed
                             result != null -> AccentGreen
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                         }
                     ),
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(8.dp))
 
             Text(
                 text = name,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontFamily = monoFamily(),
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
             )
 
             if (isExecuting) {
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(8.dp))
                 LoadingIndicator(
                     modifier = Modifier.size(14.dp),
                     color = AccentAmber,
@@ -415,16 +528,15 @@ fun ToolCallCard(
             }
 
             if (!isExecuting && (arguments.isNotEmpty() || result != null)) {
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
                     text = if (expanded) "−" else "+",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        // Expandable detail
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically() + fadeIn(),
@@ -432,29 +544,34 @@ fun ToolCallCard(
         ) {
             Column(
                 modifier = Modifier
-                    .padding(start = 12.dp, top = 4.dp)
+                    .padding(start = 10.dp, top = 4.dp)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color(0xFF141414))
-                    .padding(8.dp),
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(palette.codeBlockBg)
+                    .padding(10.dp),
             ) {
                 if (arguments.isNotEmpty() && arguments != "{}") {
                     Text(
-                        text = formatJson(arguments),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        text = remember(arguments) { formatJson(arguments) },
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = monoFamily(),
+                            fontSize = 11.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 8,
                     )
                 }
                 if (result != null) {
                     if (arguments.isNotEmpty() && arguments != "{}") {
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(6.dp))
                     }
                     Text(
                         text = result.take(400).let { if (result.length > 400) "$it..." else it },
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                        color = if (isError) AccentRed.copy(alpha = 0.8f)
-                            else AccentGreen.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = monoFamily(),
+                            fontSize = 11.sp,
+                        ),
+                        color = if (isError) AccentRed else palette.codeText,
                         maxLines = 12,
                     )
                 }
@@ -470,14 +587,14 @@ private fun ThinkingIndicator() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LoadingIndicator(
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(16.dp),
             color = MaterialTheme.colorScheme.primary,
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(10.dp))
         Text(
-            "thinking...",
-            style = MaterialTheme.typography.bodySmall.copy(fontFamily = GeistMono),
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            "Thinking…",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -491,90 +608,192 @@ private fun InputBar(
     modifier: Modifier = Modifier,
 ) {
     var text by rememberSaveable { mutableStateOf("") }
+    var isFocused by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
 
-    Row(
+    val isExpanded by remember(text, isFocused) {
+        derivedStateOf { isFocused || text.isNotBlank() }
+    }
+
+    BackHandler(enabled = isExpanded) { focusManager.clearFocus() }
+
+    val verticalPadding by animateDpAsState(
+        targetValue = if (isExpanded) 16.dp else 12.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "input-vpad",
+    )
+    val horizontalPadding by animateDpAsState(
+        targetValue = if (isExpanded) 12.dp else 16.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "input-hpad",
+    )
+    val cornerRadius by animateDpAsState(
+        targetValue = if (isExpanded) 28.dp else 26.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "input-radius",
+    )
+
+    val bg = MaterialTheme.colorScheme.background
+
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.9f))
-            .padding(horizontal = 12.dp)
-            .padding(top = 8.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        TextField(
-            value = text,
-            onValueChange = { text = it },
-            modifier = Modifier.weight(1f),
-            placeholder = {
-                Text(
-                    if (!hasProvider) "Configure a provider first..."
-                    else "Message Ophoner...",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            },
-            enabled = !isAgentRunning && hasProvider,
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = Color(0xFF1A1A1A),
-                unfocusedContainerColor = Color(0xFF1A1A1A),
-                disabledContainerColor = Color(0xFF1A1A1A).copy(alpha = 0.5f),
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                disabledIndicatorColor = Color.Transparent,
-            ),
-            shape = RoundedCornerShape(24.dp),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(
-                onSend = {
-                    if (text.isNotBlank() && !isAgentRunning) {
-                        onSend(text.trim())
-                        text = ""
-                    }
+            .background(
+                if (isExpanded) {
+                    Brush.verticalGradient(listOf(Color.Transparent, bg.copy(alpha = 0.7f)))
+                } else {
+                    Brush.verticalGradient(listOf(Color.Transparent, bg.copy(alpha = 0.55f)))
                 }
-            ),
-            maxLines = 4,
-            textStyle = MaterialTheme.typography.bodyMedium,
-        )
+            )
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+    ) {
+        val surfaceColor = MaterialTheme.colorScheme.surfaceContainerLow
+        val containerColor = if (isExpanded) surfaceColor else surfaceColor.copy(alpha = 0.78f)
 
-        Spacer(Modifier.width(8.dp))
-
-        if (isAgentRunning) {
-            IconButton(
-                onClick = onCancel,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(AccentRed.copy(alpha = 0.15f)),
-            ) {
-                Icon(
-                    Icons.Default.Stop,
-                    contentDescription = "Cancel",
-                    tint = AccentRed,
-                )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = if (isExpanded) 280.dp else 0.dp)
+                .clip(RoundedCornerShape(cornerRadius))
+                .background(containerColor)
+                .border(
+                    width = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = if (isExpanded) 0.5f else 0.35f),
+                    shape = RoundedCornerShape(cornerRadius),
+                ),
+        ) {
+            if (isExpanded) {
+                ExpandedComposerHeader(onCollapse = { focusManager.clearFocus() })
             }
-        } else {
-            IconButton(
-                onClick = {
-                    if (text.isNotBlank()) {
-                        onSend(text.trim())
-                        text = ""
-                    }
-                },
-                enabled = text.isNotBlank() && hasProvider,
+
+            Row(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (text.isNotBlank() && hasProvider) MaterialTheme.colorScheme.primary
-                        else Color(0xFF1A1A1A)
+                    .fillMaxWidth()
+                    .padding(
+                        start = 16.dp,
+                        end = 6.dp,
+                        top = if (isExpanded) 8.dp else 4.dp,
+                        bottom = 6.dp,
                     ),
+                verticalAlignment = Alignment.Bottom,
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (text.isNotBlank() && hasProvider) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                val textStyle = LocalTextStyle.current.merge(
+                    MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface)
                 )
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(top = 8.dp, bottom = 8.dp),
+                ) {
+                    if (text.isEmpty()) {
+                        Text(
+                            text = if (!hasProvider) "Configure a provider first…"
+                            else "Message Ophoner…",
+                            style = textStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        )
+                    }
+                    BasicTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                            .onFocusChanged { isFocused = it.isFocused },
+                        textStyle = textStyle,
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        enabled = !isAgentRunning && hasProvider,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                        keyboardActions = KeyboardActions(),
+                        maxLines = if (isExpanded) Int.MAX_VALUE else 4,
+                        interactionSource = remember { MutableInteractionSource() },
+                    )
+                }
+
+                Spacer(Modifier.width(6.dp))
+
+                if (isAgentRunning) {
+                    SendButton(
+                        icon = Icons.Outlined.Stop,
+                        contentDescription = "Cancel",
+                        onClick = onCancel,
+                        background = AccentRed.copy(alpha = 0.15f),
+                        tint = AccentRed,
+                    )
+                } else {
+                    val canSend = text.isNotBlank() && hasProvider
+                    SendButton(
+                        icon = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send",
+                        onClick = {
+                            if (canSend) {
+                                onSend(text.trim())
+                                text = ""
+                                focusManager.clearFocus()
+                            }
+                        },
+                        enabled = canSend,
+                        background = if (canSend) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun ExpandedComposerHeader(onCollapse: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "New message",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onCollapse, modifier = Modifier.size(32.dp)) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "Collapse",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SendButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    background: Color,
+    tint: Color,
+    enabled: Boolean = true,
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -591,3 +810,25 @@ private fun formatJson(json: String): String {
     }
 }
 
+private fun formatClock(timestamp: Long): String {
+    val now = System.currentTimeMillis()
+    val sameDay = SimpleDateFormat("yyyyMMdd", Locale.US).run {
+        format(Date(now)) == format(Date(timestamp))
+    }
+    val fmt = if (sameDay) "HH:mm" else "MMM d · HH:mm"
+    return SimpleDateFormat(fmt, Locale.getDefault()).format(Date(timestamp))
+}
+
+/** Rough estimate: ~4 chars per token for English. Returns null if duration is too tiny. */
+private fun estimateTokensPerSecond(chars: Int, durationMs: Long): Int? {
+    if (durationMs < 200 || chars < 8) return null
+    val tokens = chars / 4.0
+    val seconds = durationMs / 1000.0
+    val tps = tokens / seconds
+    return if (tps < 1) null else tps.toInt()
+}
+
+private fun copyToClipboard(context: Context, text: String) {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    cm.setPrimaryClip(ClipData.newPlainText("message", text))
+}

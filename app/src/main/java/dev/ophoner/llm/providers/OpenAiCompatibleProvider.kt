@@ -38,12 +38,12 @@ class OpenAiCompatibleProvider(
 ) : LlmProvider {
     override val providerId = "openai"
 
-    // Stream-friendly client: no overall call timeout, but per-chunk read timeout
-    // so stalled SSE streams abort rather than hang forever.
+    // Stream-friendly client: no overall call timeout, with a generous per-chunk
+    // read timeout so backgrounded-but-healthy streams are not treated as failed.
     private val httpClient: OkHttpClient = httpClient.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .callTimeout(0, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.MINUTES)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
@@ -86,7 +86,7 @@ class OpenAiCompatibleProvider(
                 close()
             } catch (e: SocketTimeoutException) {
                 android.util.Log.w("OpenAiProvider", "SSE stream timed out", e)
-                trySend(LlmResponseChunk.Error("Network timeout: no data from API for 2 minutes. ${e.message ?: ""}"))
+                trySend(LlmResponseChunk.Error("Network timeout: no data from API for 5 minutes. ${e.message ?: ""}"))
                 trySend(LlmResponseChunk.Done)
                 close(e)
             } catch (e: IOException) {

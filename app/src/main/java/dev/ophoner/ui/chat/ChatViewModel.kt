@@ -1,14 +1,15 @@
 package dev.ophoner.ui.chat
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.ophoner.agent.AgentEvent
-import dev.ophoner.agent.AgentLoop
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.ophoner.agent.AgentRunManager
+import dev.ophoner.agent.AgentService
 import dev.ophoner.data.model.ContentBlock
-import dev.ophoner.data.model.Conversation
 import dev.ophoner.data.model.ConversationMode
 import dev.ophoner.data.model.Message
 import dev.ophoner.data.model.MessageRole
@@ -18,9 +19,9 @@ import dev.ophoner.data.repository.SettingsRepository
 import dev.ophoner.llm.LlmContentBlock
 import dev.ophoner.llm.LlmMessage
 import dev.ophoner.llm.LlmRole
-import dev.ophoner.tools.ToolResult
 import kotlinx.serialization.json.jsonObject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,9 +60,10 @@ data class ChatUiState(
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
-    private val agentLoop: AgentLoop,
+    private val agentRunManager: AgentRunManager,
     private val conversationRepository: ConversationRepository,
     private val settingsRepository: SettingsRepository,
+    @param:ApplicationContext private val appContext: Context,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -72,7 +74,8 @@ class ChatViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
-    private var agentJob: Job? = null
+    private var messagesJob: Job? = null
+    private var runStateJob: Job? = null
     private val conversationId: String? = savedStateHandle["conversationId"]
     private val navFolderUri: String? = savedStateHandle["folderUri"]
     private val navFolderName: String? = savedStateHandle["folderName"]
@@ -89,17 +92,16 @@ class ChatViewModel @Inject constructor(
 
             // Load existing conversation and restore its folder scope (if any).
             if (conversationId != null) {
-                val messages = conversationRepository.getMessages(conversationId)
                 val conv = conversationRepository.getConversation(conversationId)
                 _uiState.update {
                     it.copy(
-                        messages = messages,
                         conversationId = conversationId,
                         conversationMode = conv?.mode ?: it.conversationMode,
                         scopedFolderName = conv?.scopedFolderName,
                         scopedFolderUri = conv?.scopedFolderUri,
                     )
                 }
+                observeConversation(conversationId)
             }
 
             // Apply folder scope from nav args for NEW conversations only (no conversationId).
@@ -133,6 +135,7 @@ class ChatViewModel @Inject constructor(
                     scopedFolderName = folderName,
                 )
                 _uiState.update { it.copy(conversationId = conv.id) }
+                observeConversation(conv.id)
                 conv.id
             }
 
@@ -174,125 +177,18 @@ class ChatViewModel @Inject constructor(
             }
             val llmMessages = buildLlmMessages(systemPrompt)
 
-            // Run agent loop
-            agentJob = viewModelScope.launch {
-                var streamedText = StringBuilder()
-
-                fun flushIteration() {
-                    val text = streamedText.toString()
-                    val toolCalls = _uiState.value.activeToolCalls.toList()
-                    if (text.isEmpty() && toolCalls.isEmpty()) return
-
-                    val content = mutableListOf<ContentBlock>()
-                    if (text.isNotEmpty()) content.add(ContentBlock.Text(text))
-                    toolCalls.forEach { tc ->
-                        content.add(ContentBlock.ToolUse(tc.id, tc.name, tc.arguments))
-                        if (tc.result != null) {
-                            content.add(ContentBlock.ToolResult(tc.id, tc.result, tc.isError))
-                        }
-                    }
-
-                    val idx = _uiState.value.messages.size
-                    val msg = Message(
-                        id = UUID.randomUUID().toString(),
-                        conversationId = convId,
-                        role = MessageRole.ASSISTANT,
-                        content = content,
-                        orderIndex = idx,
-                        createdAt = System.currentTimeMillis(),
-                    )
-
-                    viewModelScope.launch {
-                        conversationRepository.saveMessage(msg)
-                    }
-
-                    _uiState.update { state ->
-                        state.copy(
-                            messages = state.messages + msg,
-                            streamingText = "",
-                            activeToolCalls = emptyList(),
-                        )
-                    }
-                    streamedText = StringBuilder()
-                }
-
-                agentLoop.run(llmMessages, config).collect { event ->
-                    when (event) {
-                        is AgentEvent.TextDelta -> {
-                            streamedText.append(event.text)
-                            _uiState.update { it.copy(streamingText = streamedText.toString()) }
-                        }
-                        is AgentEvent.ToolCallStarted -> {
-                            _uiState.update { state ->
-                                state.copy(activeToolCalls = state.activeToolCalls + ToolCallUiState(
-                                    id = event.id,
-                                    name = event.name,
-                                ))
-                            }
-                        }
-                        is AgentEvent.ToolCallArgDelta -> {
-                            _uiState.update { state ->
-                                val existing = state.activeToolCalls.any { it.id == event.id }
-                                if (existing) {
-                                    state.copy(activeToolCalls = state.activeToolCalls.map { tc ->
-                                        if (tc.id == event.id) tc.copy(arguments = tc.arguments + event.json)
-                                        else tc
-                                    })
-                                } else {
-                                    // Delta for unknown id — route to last tool call
-                                    val last = state.activeToolCalls.lastOrNull()
-                                    if (last != null) {
-                                        state.copy(activeToolCalls = state.activeToolCalls.map { tc ->
-                                            if (tc.id == last.id) tc.copy(arguments = tc.arguments + event.json)
-                                            else tc
-                                        })
-                                    } else state
-                                }
-                            }
-                        }
-                        is AgentEvent.ToolExecuting -> {
-                            _uiState.update { state ->
-                                state.copy(activeToolCalls = state.activeToolCalls.map { tc ->
-                                    if (tc.id == event.id) tc.copy(isExecuting = true)
-                                    else tc
-                                })
-                            }
-                        }
-                        is AgentEvent.ToolCompleted -> {
-                            _uiState.update { state ->
-                                state.copy(activeToolCalls = state.activeToolCalls.map { tc ->
-                                    if (tc.id == event.id) tc.copy(
-                                        isExecuting = false,
-                                        result = event.result.output,
-                                        isError = event.result.isError,
-                                    ) else tc
-                                })
-                            }
-                        }
-                        is AgentEvent.IterationComplete -> {
-                            // Flush current iteration into a saved message, reset for next
-                            flushIteration()
-                        }
-                        is AgentEvent.Error -> {
-                            _uiState.update { it.copy(error = event.message) }
-                        }
-                        is AgentEvent.Finished -> {
-                            // Flush any remaining content from the final iteration
-                            flushIteration()
-                            _uiState.update { it.copy(isAgentRunning = false) }
-                        }
-                    }
-                }
-            }
+            AgentService.start(appContext)
+            agentRunManager.startRun(convId, llmMessages, config)
         }
     }
 
     fun cancelAgent() {
-        agentJob?.cancel()
+        agentRunManager.cancelRun(_uiState.value.conversationId)
         _uiState.update { it.copy(isAgentRunning = false, streamingText = "", activeToolCalls = emptyList()) }
     }
 
     fun clearError() {
+        agentRunManager.clearError(_uiState.value.conversationId)
         _uiState.update { it.copy(error = null) }
     }
 
@@ -307,6 +203,44 @@ class ChatViewModel @Inject constructor(
             val config = providers.find { it.id == activeId } ?: providers.firstOrNull()
             val hasDir = settingsRepository.observeWorkingDirectoryUri().firstOrNull() != null
             _uiState.update { it.copy(providerConfig = config, hasWorkingDirectory = hasDir) }
+        }
+    }
+
+    private fun observeConversation(conversationId: String) {
+        if (_uiState.value.conversationId == conversationId &&
+            messagesJob?.isActive == true &&
+            runStateJob?.isActive == true
+        ) return
+
+        messagesJob?.cancel()
+        runStateJob?.cancel()
+
+        messagesJob = viewModelScope.launch {
+            conversationRepository.observeMessages(conversationId).collectLatest { messages ->
+                _uiState.update { it.copy(messages = messages) }
+            }
+        }
+
+        runStateJob = viewModelScope.launch {
+            agentRunManager.observeRun(conversationId).collectLatest { run ->
+                _uiState.update {
+                    it.copy(
+                        streamingText = run?.streamingText.orEmpty(),
+                        activeToolCalls = run?.activeToolCalls?.map { toolCall ->
+                            ToolCallUiState(
+                                id = toolCall.id,
+                                name = toolCall.name,
+                                arguments = toolCall.arguments,
+                                result = toolCall.result,
+                                isError = toolCall.isError,
+                                isExecuting = toolCall.isExecuting,
+                            )
+                        }.orEmpty(),
+                        isAgentRunning = run?.isRunning == true,
+                        error = run?.error,
+                    )
+                }
+            }
         }
     }
 
@@ -349,6 +283,7 @@ class ChatViewModel @Inject constructor(
                             is ContentBlock.ToolResult -> LlmContentBlock.ToolResult(
                                 block.toolUseId, block.output, block.isError
                             )
+                            is ContentBlock.Stats -> null // UI-only metadata, never replayed
                         }
                     }
                     result.add(LlmMessage(LlmRole.ASSISTANT, blocks))

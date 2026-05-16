@@ -40,5 +40,8 @@ shell_audit.log
 # OS
 Thumbs.db
 
+# Claude / transient IDE files
+.claude/
+
 # User-generated schema exports (keep the folder in git once populated if desired)
 # app/schemas/

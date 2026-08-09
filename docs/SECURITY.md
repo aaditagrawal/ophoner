@@ -5,12 +5,20 @@ Ophoner is an LLM agent that runs tools on your device. This file documents what
 ## What's protected
 
 ### Credential storage
-API keys (Claude, OpenAI, etc.) are held in `EncryptedSharedPreferences` backed by the Android Keystore master key (AES256-GCM for values, AES256-SIV for prefs keys). The rest of a `ProviderConfig` (display name, base URL, model id) lives in DataStore in plaintext — it's not secret.
+API keys (Claude, OpenAI, OpenRouter, Gemini, etc.) and OAuth token blobs (ChatGPT/Codex device-code: access/refresh/id tokens) are held in `EncryptedSharedPreferences` backed by the Android Keystore master key (AES256-GCM for values, AES256-SIV for prefs keys). The rest of a `ProviderConfig` (display name, base URL, model id, plan label) lives in DataStore in plaintext — it's not secret.
 
-Keys never enter:
+**Auth modes shipped:**
+- Paste API keys for Anthropic Console, OpenAI Platform, Gemini AI Studio, OpenRouter, and custom OpenAI/Anthropic-compatible endpoints
+- OpenRouter official PKCE → exchanges to a long-lived `sk-or-…` key (stored as an API key)
+- ChatGPT/Codex **device-code** login (uses the public Codex CLI client id + `chatgpt.com/backend-api/codex`). This is an unofficial third-party use of ChatGPT subscription credentials and may break; prefer Platform API keys when possible
+- **Not implemented:** Claude.ai / Claude Code Pro/Max OAuth — Anthropic forbids third-party apps from offering Claude.ai login; use Console API keys only
+
+Keys/tokens never enter:
 - Local logs
 - Cloud backup (`allowBackup=false` + `dataExtractionRules` exclude sharedpref/database/file/external)
 - Crash reports (none are wired up)
+
+Provider JSON export includes API keys for backup/move but does **not** include OAuth refresh blobs — re-login is required after import for ChatGPT device sessions.
 
 ### Network
 - `network_security_config.xml` enforces `cleartextTrafficPermitted=false` globally

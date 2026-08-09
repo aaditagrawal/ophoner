@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.ophoner.data.model.OAuthTokens
 import dev.ophoner.data.model.PinnedFolder
 import dev.ophoner.data.model.ProviderConfig
 import kotlinx.coroutines.Dispatchers
@@ -92,13 +93,15 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun saveProviders(providers: List<ProviderConfig>) {
-        // Persist api keys in EncryptedSharedPreferences keyed by provider id,
-        // and store only non-sensitive metadata in DataStore.
+        // Persist api keys / oauth blobs in EncryptedSharedPreferences keyed by
+        // provider id, and store only non-sensitive metadata in DataStore.
         val existingIds = observeProviders().first().map { it.id }.toSet()
         val incomingIds = providers.map { it.id }.toSet()
 
-        // Remove secrets for providers that are no longer present.
-        (existingIds - incomingIds).forEach { id -> secureStorage.remove(apiKeyPref(id)) }
+        (existingIds - incomingIds).forEach { id ->
+            secureStorage.remove(apiKeyPref(id))
+            secureStorage.remove(oauthPref(id))
+        }
 
         providers.forEach { provider ->
             secureStorage.putString(apiKeyPref(provider.id), provider.apiKey)
@@ -108,6 +111,19 @@ class SettingsRepository @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[providersKey] = json.encodeToString(sanitized)
         }
+    }
+
+    suspend fun saveOAuthTokens(providerId: String, tokens: OAuthTokens) {
+        secureStorage.putString(oauthPref(providerId), json.encodeToString(tokens))
+    }
+
+    fun getOAuthTokens(providerId: String): OAuthTokens? {
+        val raw = secureStorage.getString(oauthPref(providerId)) ?: return null
+        return runCatching { json.decodeFromString<OAuthTokens>(raw) }.getOrNull()
+    }
+
+    suspend fun clearOAuthTokens(providerId: String) {
+        secureStorage.remove(oauthPref(providerId))
     }
 
     /**
@@ -218,4 +234,6 @@ class SettingsRepository @Inject constructor(
         copy(apiKey = secureStorage.getString(apiKeyPref(id)) ?: "")
 
     private fun apiKeyPref(providerId: String): String = "provider_api_key_$providerId"
+
+    private fun oauthPref(providerId: String): String = "provider_oauth_$providerId"
 }

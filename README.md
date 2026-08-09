@@ -4,7 +4,7 @@ An on-device Android AI agent. Chat with Claude or any OpenAI-compatible LLM and
 
 ## Core features
 
-- **Multi-provider chat** — Claude (native streaming) and any OpenAI-compatible endpoint
+- **Multi-provider chat** — Claude, OpenAI, OpenRouter, Gemini, custom OpenAI/Anthropic-compatible endpoints, plus ChatGPT/Codex device-code login; plan presets, remote model catalogs, and manual model slugs
 - **Tools** — `shell_execute`, `file_read`, `file_write`, `file_list`, `file_delete`, `file_move`, `web_fetch`, `web_search`, `device_control`, `intent_launch`, `app_list`
 - **YOLO mode** — settings toggle that auto-approves soft tool gates and raises the agent iteration cap (dangerous; use with care)
 - **Share target** — share text into a new chat via Android `ACTION_SEND`

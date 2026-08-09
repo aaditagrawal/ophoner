@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.Tonality
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -80,7 +81,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.ophoner.data.model.AuthMode
 import dev.ophoner.data.model.ProviderConfig
+import dev.ophoner.data.model.ProviderPresets
 import dev.ophoner.data.model.ProviderType
 import dev.ophoner.tools.sandbox.ShizukuStatus
 import dev.ophoner.ui.components.GroupedSection
@@ -88,6 +91,7 @@ import dev.ophoner.ui.theme.AccentChoice
 import dev.ophoner.ui.theme.ThemeMode
 import dev.ophoner.ui.theme.UiFont
 import dev.ophoner.ui.theme.isDarkTheme
+import java.util.UUID
 
 private val InstrumentCorner = RoundedCornerShape(10.dp)
 private val InstrumentInnerCorner = RoundedCornerShape(7.dp)
@@ -100,7 +104,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var showAddProvider by rememberSaveable { mutableStateOf(false) }
+    var showPlanPicker by rememberSaveable { mutableStateOf(false) }
+    var draftPlanId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -136,6 +141,18 @@ fun SettingsScreen(
         uiState.importExportMessage?.let { msg ->
             snackbarHostState.showSnackbar(msg)
             viewModel.clearImportExportMessage()
+        }
+    }
+
+    LaunchedEffect(uiState.authMessage) {
+        uiState.authMessage?.let { msg ->
+            if (msg.startsWith("Signed in")) {
+                showPlanPicker = false
+                draftPlanId = null
+                editingProviderId = null
+            }
+            snackbarHostState.showSnackbar(msg)
+            viewModel.clearAuthMessage()
         }
     }
 
@@ -230,7 +247,7 @@ fun SettingsScreen(
                     InstrumentButton(
                         text = "Add",
                         icon = Icons.Outlined.Add,
-                        onClick = { showAddProvider = true },
+                        onClick = { showPlanPicker = true },
                         modifier = Modifier.weight(1f),
                     )
                     InstrumentButton(
@@ -300,14 +317,47 @@ fun SettingsScreen(
         }
     }
 
-    if (showAddProvider) {
+    if (showPlanPicker && draftPlanId == null) {
+        PlanPickerDialog(
+            onDismiss = { showPlanPicker = false },
+            onSelectPlan = { planId ->
+                draftPlanId = planId
+            },
+            onSkipToCustom = {
+                draftPlanId = ""
+            },
+        )
+    }
+
+    if (showPlanPicker && draftPlanId != null) {
+        val plan = draftPlanId?.takeIf { it.isNotEmpty() }?.let { id ->
+            ProviderPresets.ALL.find { it.id == id }
+        }
         ProviderDialog(
             existing = null,
-            onDismiss = { showAddProvider = false },
+            plan = plan,
+            modelOptions = uiState.modelOptions,
+            openRouterPkcePending = uiState.openRouterPkcePending,
+            onDismiss = {
+                viewModel.cancelDeviceLogin()
+                viewModel.clearOpenRouterPkce()
+                draftPlanId = null
+                showPlanPicker = false
+            },
             onSubmit = { config ->
                 viewModel.addProvider(config)
-                showAddProvider = false
+                draftPlanId = null
+                showPlanPicker = false
             },
+            onSeedModels = viewModel::seedModelOptions,
+            onFetchModels = viewModel::refreshModelsForDraft,
+            onOpenUrl = viewModel::openUrl,
+            onBeginCodexLogin = viewModel::beginCodexDeviceLogin,
+            onBeginOpenRouterLogin = {
+                val url = viewModel.beginOpenRouterLogin()
+                url?.let(viewModel::openUrl)
+            },
+            onCompleteOpenRouterLogin = viewModel::completeOpenRouterLogin,
         )
     }
 
@@ -316,15 +366,42 @@ fun SettingsScreen(
         if (existing != null) {
             ProviderDialog(
                 existing = existing,
-                onDismiss = { editingProviderId = null },
+                plan = ProviderPresets.forType(existing.providerType),
+                modelOptions = uiState.modelOptions,
+                openRouterPkcePending = uiState.openRouterPkcePending,
+                onDismiss = {
+                    viewModel.cancelDeviceLogin()
+                    viewModel.clearOpenRouterPkce()
+                    editingProviderId = null
+                },
                 onSubmit = { config ->
                     viewModel.updateProvider(config)
                     editingProviderId = null
+                },
+                onSeedModels = viewModel::seedModelOptions,
+                onFetchModels = viewModel::refreshModelsForDraft,
+                onOpenUrl = viewModel::openUrl,
+                onBeginCodexLogin = viewModel::beginCodexDeviceLogin,
+                onBeginOpenRouterLogin = {
+                    val url = viewModel.beginOpenRouterLogin()
+                    url?.let(viewModel::openUrl)
+                },
+                onCompleteOpenRouterLogin = viewModel::completeOpenRouterLogin,
+                onAddCustomSlugPersist = { slug ->
+                    viewModel.addCustomModelSlug(existing.id, slug)
                 },
             )
         } else {
             editingProviderId = null
         }
+    }
+
+    uiState.deviceLogin?.let { deviceLogin ->
+        DeviceLoginDialog(
+            state = deviceLogin,
+            onOpenVerification = { viewModel.openUrl(deviceLogin.verificationUrl) },
+            onCancel = viewModel::cancelDeviceLogin,
+        )
     }
 }
 
@@ -806,7 +883,7 @@ private fun ProviderRow(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "${config.providerType.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }} · ${config.modelId.split("/").lastOrNull() ?: config.modelId}",
+                providerRowSubtitle(config),
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -829,6 +906,20 @@ private fun ProviderRow(
             )
         }
     }
+}
+
+private fun providerRowSubtitle(config: ProviderConfig): String {
+    val planOrAuth = when {
+        config.planLabel.isNotBlank() && config.authMode == AuthMode.OAUTH_DEVICE ->
+            "${config.planLabel} · device"
+        config.planLabel.isNotBlank() -> config.planLabel
+        config.authMode == AuthMode.OAUTH_DEVICE -> "device"
+        config.authMode == AuthMode.OAUTH_PKCE -> "PKCE"
+        else -> config.providerType.name.replace('_', ' ').lowercase()
+            .replaceFirstChar { it.uppercase() }
+    }
+    val model = config.modelId.split("/").lastOrNull()?.takeIf { it.isNotBlank() } ?: config.modelId
+    return if (model.isNotBlank()) "$planOrAuth · $model" else planOrAuth
 }
 
 @Composable
@@ -879,29 +970,217 @@ private fun ShizukuRow(
     }
 }
 
+@Composable
+private fun PlanPickerDialog(
+    onDismiss: () -> Unit,
+    onSelectPlan: (String) -> Unit,
+    onSkipToCustom: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Provider") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    "Choose a plan preset, or continue with a blank custom provider.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                ProviderPresets.ALL.forEach { plan ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(InstrumentCorner)
+                            .border(
+                                Hairline,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                InstrumentCorner,
+                            )
+                            .clickable { onSelectPlan(plan.id) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            plan.title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            plan.subtitle,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onSkipToCustom) { Text("Custom") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun DeviceLoginDialog(
+    state: DeviceLoginUi,
+    onOpenVerification: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Sign in with ChatGPT") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Enter this code on the verification page:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    state.userCode,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 2.sp,
+                    ),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                if (state.busy) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(
+                            "Waiting for authorization…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                state.error?.let { error ->
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onOpenVerification,
+                enabled = state.verificationUrl.isNotBlank(),
+            ) {
+                Text("Open verification page")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        },
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProviderDialog(
     existing: ProviderConfig?,
+    plan: ProviderPresets.Plan?,
+    modelOptions: List<String>,
+    openRouterPkcePending: Boolean,
     onDismiss: () -> Unit,
     onSubmit: (ProviderConfig) -> Unit,
+    onSeedModels: (ProviderConfig) -> Unit,
+    onFetchModels: (ProviderConfig) -> Unit,
+    onOpenUrl: (String) -> Unit,
+    onBeginCodexLogin: (ProviderConfig) -> Unit,
+    onBeginOpenRouterLogin: () -> Unit,
+    onCompleteOpenRouterLogin: (code: String, draft: ProviderConfig) -> Unit,
+    onAddCustomSlugPersist: ((String) -> Unit)? = null,
 ) {
     val isEdit = existing != null
-    var name by rememberSaveable(existing?.id) { mutableStateOf(existing?.displayName ?: "") }
-    var apiKey by rememberSaveable(existing?.id) { mutableStateOf(existing?.apiKey ?: "") }
-    var baseUrl by rememberSaveable(existing?.id) { mutableStateOf(existing?.baseUrl ?: "") }
-    var modelId by rememberSaveable(existing?.id) { mutableStateOf(existing?.modelId ?: "") }
-    var selectedType by rememberSaveable(existing?.id) {
-        mutableStateOf(existing?.providerType ?: ProviderType.CUSTOM_OPENAI)
+    val initialType = existing?.providerType ?: plan?.providerType ?: ProviderType.CUSTOM_OPENAI
+    val initialAuth = existing?.authMode ?: plan?.authMode ?: AuthMode.API_KEY
+
+    var name by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(existing?.displayName ?: plan?.defaultDisplayName.orEmpty())
     }
+    var apiKey by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(existing?.apiKey.orEmpty())
+    }
+    var baseUrl by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(existing?.baseUrl ?: plan?.defaultBaseUrl.orEmpty())
+    }
+    var modelId by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(existing?.modelId ?: plan?.defaultModelId.orEmpty())
+    }
+    var selectedType by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(initialType)
+    }
+    var authMode by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(initialAuth)
+    }
+    var accountId by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(existing?.accountId.orEmpty())
+    }
+    var planLabel by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(existing?.planLabel ?: plan?.planLabel.orEmpty())
+    }
+    var customSlugs by remember(existing?.id, plan?.id) {
+        mutableStateOf(existing?.customModelSlugs.orEmpty())
+    }
+    var newSlug by rememberSaveable(existing?.id, plan?.id) { mutableStateOf("") }
+    var openRouterCode by rememberSaveable(existing?.id, plan?.id) { mutableStateOf("") }
     var typeExpanded by remember { mutableStateOf(false) }
+    var modelExpanded by remember { mutableStateOf(false) }
     var showApiKey by rememberSaveable { mutableStateOf(false) }
+    val providerId = remember(existing?.id) { existing?.id ?: UUID.randomUUID().toString() }
+
+    fun draftConfig(): ProviderConfig = ProviderConfig(
+        id = providerId,
+        displayName = name,
+        apiKey = apiKey,
+        baseUrl = baseUrl,
+        modelId = modelId,
+        providerType = selectedType,
+        authMode = authMode,
+        accountId = accountId,
+        customModelSlugs = customSlugs,
+        planLabel = planLabel,
+    )
+
+    LaunchedEffect(existing?.id, plan?.id, selectedType) {
+        onSeedModels(draftConfig())
+    }
+
+    val oauthDeviceAuthed = authMode == AuthMode.OAUTH_DEVICE && accountId.isNotBlank()
+    val canSubmit = name.isNotBlank() &&
+        baseUrl.isNotBlank() &&
+        modelId.isNotBlank() &&
+        (apiKey.isNotBlank() || oauthDeviceAuthed)
+
+    val activePlan = plan?.takeIf { it.providerType == selectedType }
+        ?: ProviderPresets.forType(selectedType)
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isEdit) "Edit Provider" else "Add Provider") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -921,7 +1200,9 @@ private fun ProviderDialog(
                         readOnly = true,
                         label = { Text("Provider Type") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
-                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                        modifier = Modifier
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                            .fillMaxWidth(),
                     )
                     ExposedDropdownMenu(
                         expanded = typeExpanded,
@@ -933,29 +1214,138 @@ private fun ProviderDialog(
                                 onClick = {
                                     selectedType = type
                                     typeExpanded = false
-                                    baseUrl = when (type) {
-                                        ProviderType.CLAUDE -> "https://api.anthropic.com"
-                                        ProviderType.OPENAI -> "https://api.openai.com/v1"
-                                        ProviderType.GEMINI -> "https://generativelanguage.googleapis.com/v1beta/openai"
-                                        else -> baseUrl
+                                    val defaults = ProviderPresets.forType(type)
+                                    if (defaults != null) {
+                                        if (baseUrl.isBlank() || !isEdit) {
+                                            baseUrl = defaults.defaultBaseUrl
+                                        }
+                                        if (modelId.isBlank() || !isEdit) {
+                                            modelId = defaults.defaultModelId
+                                        }
+                                        if (name.isBlank() || name == plan?.defaultDisplayName) {
+                                            name = defaults.defaultDisplayName
+                                        }
+                                        authMode = defaults.authMode
+                                        planLabel = defaults.planLabel
+                                        if (customSlugs.isEmpty()) {
+                                            customSlugs = emptyList()
+                                        }
                                     }
+                                    onSeedModels(
+                                        ProviderConfig(
+                                            id = providerId,
+                                            displayName = name,
+                                            apiKey = apiKey,
+                                            baseUrl = baseUrl,
+                                            modelId = modelId,
+                                            providerType = type,
+                                            authMode = authMode,
+                                            accountId = accountId,
+                                            customModelSlugs = customSlugs,
+                                            planLabel = planLabel,
+                                        ),
+                                    )
                                 },
                             )
                         }
                     }
                 }
 
+                if (selectedType == ProviderType.CLAUDE) {
+                    Text(
+                        "Claude.ai subscription login is not supported in third-party apps. " +
+                            "Use an Anthropic Console API key.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val consoleUrl = activePlan?.consoleUrl.orEmpty()
+                    if (consoleUrl.isNotBlank()) {
+                        TextButton(onClick = { onOpenUrl(consoleUrl) }) {
+                            Text("Open Console API keys")
+                        }
+                    }
+                }
+
+                if (selectedType == ProviderType.CODEX_CHATGPT ||
+                    activePlan?.supportsDeviceLogin == true
+                ) {
+                    TextButton(
+                        onClick = {
+                            authMode = AuthMode.OAUTH_DEVICE
+                            onBeginCodexLogin(draftConfig())
+                        },
+                    ) {
+                        Text(
+                            if (oauthDeviceAuthed) "Re-sign in with ChatGPT"
+                            else "Sign in with ChatGPT",
+                        )
+                    }
+                    if (oauthDeviceAuthed) {
+                        Text(
+                            "Signed in · account ${accountId.take(8)}…",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                if (selectedType == ProviderType.OPENROUTER ||
+                    activePlan?.supportsPkceLogin == true
+                ) {
+                    TextButton(onClick = onBeginOpenRouterLogin) {
+                        Text("Sign in with OpenRouter")
+                    }
+                    if (openRouterPkcePending) {
+                        OutlinedTextField(
+                            value = openRouterCode,
+                            onValueChange = { openRouterCode = it },
+                            label = { Text("Authorization code") },
+                            placeholder = { Text("Paste code from OpenRouter") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        TextButton(
+                            onClick = {
+                                onCompleteOpenRouterLogin(openRouterCode, draftConfig())
+                            },
+                            enabled = openRouterCode.isNotBlank(),
+                        ) {
+                            Text("Complete OpenRouter sign-in")
+                        }
+                    }
+                }
+
+                val keyHint = activePlan?.apiKeyHint.orEmpty()
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
-                    label = { Text("API Key") },
+                    label = {
+                        Text(
+                            if (oauthDeviceAuthed ||
+                                (selectedType == ProviderType.CODEX_CHATGPT &&
+                                    authMode == AuthMode.OAUTH_DEVICE)
+                            ) {
+                                "API Key (optional)"
+                            } else {
+                                "API Key"
+                            },
+                        )
+                    },
+                    placeholder = {
+                        if (keyHint.isNotBlank()) Text(keyHint)
+                    },
                     singleLine = true,
                     visualTransformation = if (showApiKey) VisualTransformation.None
                     else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     trailingIcon = {
                         TextButton(onClick = { showApiKey = !showApiKey }) {
-                            Text(if (showApiKey) "hide" else "show", style = MaterialTheme.typography.labelSmall)
+                            Text(
+                                if (showApiKey) "hide" else "show",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -970,31 +1360,101 @@ private fun ProviderDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                OutlinedTextField(
-                    value = modelId,
-                    onValueChange = { modelId = it },
-                    label = { Text("Model ID") },
-                    placeholder = { Text("e.g. gpt-4o, claude-sonnet-4-20250514") },
-                    singleLine = true,
+                ExposedDropdownMenuBox(
+                    expanded = modelExpanded,
+                    onExpandedChange = { modelExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = modelId,
+                        onValueChange = { modelId = it },
+                        label = { Text("Model ID / slug") },
+                        placeholder = { Text("e.g. gpt-5.4, anthropic/claude-sonnet-4.5") },
+                        singleLine = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
+                        modifier = Modifier
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable)
+                            .fillMaxWidth(),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = modelExpanded,
+                        onDismissRequest = { modelExpanded = false },
+                    ) {
+                        if (modelOptions.isEmpty()) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "No suggestions yet — fetch or type a slug",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                },
+                                onClick = { modelExpanded = false },
+                            )
+                        } else {
+                            modelOptions.forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            option,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 13.sp,
+                                            ),
+                                        )
+                                    },
+                                    onClick = {
+                                        modelId = option
+                                        modelExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                )
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = newSlug,
+                        onValueChange = { newSlug = it },
+                        label = { Text("Add model slug") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            val slug = newSlug.trim()
+                            if (slug.isEmpty()) return@TextButton
+                            customSlugs = (customSlugs + slug).distinct()
+                            if (modelId.isBlank()) modelId = slug
+                            onAddCustomSlugPersist?.invoke(slug)
+                            onSeedModels(draftConfig().copy(customModelSlugs = customSlugs, modelId = modelId))
+                            newSlug = ""
+                        },
+                        enabled = newSlug.isNotBlank(),
+                    ) {
+                        Text("Add")
+                    }
+                }
+
+                TextButton(
+                    onClick = { onFetchModels(draftConfig()) },
+                    enabled = apiKey.isNotBlank() || oauthDeviceAuthed,
+                ) {
+                    Text("Fetch models")
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (name.isNotBlank() && apiKey.isNotBlank() && baseUrl.isNotBlank() && modelId.isNotBlank()) {
-                        onSubmit(ProviderConfig(
-                            id = existing?.id ?: java.util.UUID.randomUUID().toString(),
-                            displayName = name,
-                            apiKey = apiKey,
-                            baseUrl = baseUrl,
-                            modelId = modelId,
-                            providerType = selectedType,
-                        ))
+                    if (canSubmit) {
+                        onSubmit(draftConfig())
                     }
                 },
-                enabled = name.isNotBlank() && apiKey.isNotBlank() && baseUrl.isNotBlank() && modelId.isNotBlank(),
+                enabled = canSubmit,
             ) {
                 Text(if (isEdit) "Save" else "Add")
             }

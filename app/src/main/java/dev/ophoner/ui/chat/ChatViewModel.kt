@@ -9,12 +9,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.ophoner.agent.AgentRunManager
 import dev.ophoner.agent.AgentService
+import dev.ophoner.agent.SkillLoader
 import dev.ophoner.data.model.ContentBlock
 import dev.ophoner.data.model.ConversationMode
 import dev.ophoner.data.model.Message
 import dev.ophoner.data.model.MessageRole
 import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.repository.ConversationRepository
+import dev.ophoner.data.repository.PendingShareText
 import dev.ophoner.data.repository.SettingsRepository
 import dev.ophoner.llm.LlmContentBlock
 import dev.ophoner.llm.LlmMessage
@@ -56,6 +58,8 @@ data class ChatUiState(
     val conversationMode: ConversationMode = ConversationMode.GENERAL,
     val scopedFolderName: String? = null,
     val scopedFolderUri: String? = null,
+    /** One-shot composer prefill (e.g. ACTION_SEND share target). */
+    val draftText: String? = null,
 )
 
 @HiltViewModel
@@ -63,6 +67,8 @@ class ChatViewModel @Inject constructor(
     private val agentRunManager: AgentRunManager,
     private val conversationRepository: ConversationRepository,
     private val settingsRepository: SettingsRepository,
+    private val pendingShareText: PendingShareText,
+    private val skillLoader: SkillLoader,
     @param:ApplicationContext private val appContext: Context,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -112,7 +118,18 @@ class ChatViewModel @Inject constructor(
                     scopedFolderUri = navFolderUri,
                 ) }
             }
+
+            // Prefill composer from share-target text on a fresh chat.
+            if (conversationId == null) {
+                pendingShareText.consume()?.let { shared ->
+                    _uiState.update { it.copy(draftText = shared) }
+                }
+            }
         }
+    }
+
+    fun clearDraftText() {
+        _uiState.update { it.copy(draftText = null) }
     }
 
     fun sendMessage(text: String) {
@@ -122,21 +139,60 @@ class ChatViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            // Create conversation if needed
+            // Resolve scope before the run. init{} loads folder/conversation async from
+            // nav args / DB; sending before that finishes must not drop folder scope
+            // (wrong root for file tools + skills never loaded from the project folder).
             val state = _uiState.value
-            val mode = state.conversationMode
-            val folderUri = state.scopedFolderUri
-            val folderName = state.scopedFolderName
-            val convId = state.conversationId ?: run {
+            val existingConvId = state.conversationId ?: conversationId
+            val existingConv = if (
+                existingConvId != null &&
+                state.scopedFolderUri == null &&
+                navFolderUri == null
+            ) {
+                conversationRepository.getConversation(existingConvId)
+            } else {
+                null
+            }
+            val folderUri = state.scopedFolderUri ?: navFolderUri ?: existingConv?.scopedFolderUri
+            val folderName = state.scopedFolderName ?: navFolderName ?: existingConv?.scopedFolderName
+            val mode = when {
+                state.conversationMode == ConversationMode.FOLDER -> ConversationMode.FOLDER
+                existingConv?.mode == ConversationMode.FOLDER -> ConversationMode.FOLDER
+                folderUri != null && navFolderUri != null -> ConversationMode.FOLDER
+                else -> state.conversationMode
+            }
+            if (
+                folderUri != state.scopedFolderUri ||
+                folderName != state.scopedFolderName ||
+                mode != state.conversationMode
+            ) {
+                _uiState.update {
+                    it.copy(
+                        conversationMode = mode,
+                        scopedFolderUri = folderUri,
+                        scopedFolderName = folderName,
+                    )
+                }
+            }
+            val convId = existingConvId ?: run {
                 val conv = conversationRepository.createConversation(
                     providerConfigId = config.id,
                     mode = mode,
                     scopedFolderUri = folderUri,
                     scopedFolderName = folderName,
                 )
-                _uiState.update { it.copy(conversationId = conv.id) }
-                observeConversation(conv.id)
                 conv.id
+            }
+            if (state.conversationId != convId) {
+                _uiState.update { it.copy(conversationId = convId) }
+                observeConversation(convId)
+            }
+            // Hydrate history if observe hasn't emitted yet (same init race as folder scope).
+            if (existingConvId != null && _uiState.value.messages.isEmpty()) {
+                val loaded = conversationRepository.getMessages(convId)
+                if (loaded.isNotEmpty()) {
+                    _uiState.update { it.copy(messages = loaded) }
+                }
             }
 
             // Add user message
@@ -164,21 +220,39 @@ class ChatViewModel @Inject constructor(
                 conversationRepository.updateTitle(convId, title)
             }
 
+            // Skills load from the same root file tools will use this run:
+            // conversation folder URI, else global settings working directory.
+            val skillsRootUri = folderUri
+                ?: settingsRepository.observeWorkingDirectoryUri().firstOrNull()
+
             // Build LLM messages from conversation
             val baseSystemPrompt = settingsRepository.observeSystemPrompt().firstOrNull() ?: ""
-            val systemPrompt = if (mode == ConversationMode.FOLDER && folderName != null) {
-                "$baseSystemPrompt\n\nIMPORTANT: You are operating in FOLDER MODE, scoped to the directory: $folderName\n" +
-                "- All file operations (read, write, list, delete) MUST be within this directory only.\n" +
-                "- Do NOT access files outside this directory.\n" +
-                "- Paths are relative to this directory root.\n" +
-                "- Focus your assistance on the files and content within this folder."
+            val folderScopePrompt = if (mode == ConversationMode.FOLDER && folderName != null) {
+                "\n\nIMPORTANT: You are operating in FOLDER MODE, scoped to the directory: $folderName\n" +
+                    "- All file operations (read, write, list, delete, move) MUST be within this directory only.\n" +
+                    "- Do NOT access files outside this directory.\n" +
+                    "- Paths are relative to this directory root.\n" +
+                    "- Focus your assistance on the files and content within this folder."
             } else {
-                baseSystemPrompt
+                ""
             }
+            val skillsPrompt = try {
+                skillLoader.formatForSystemPrompt(skillsRootUri).orEmpty()
+            } catch (t: Throwable) {
+                Log.w(TAG, "Skill load failed (continuing without skills)", t)
+                ""
+            }
+            val systemPrompt = baseSystemPrompt + folderScopePrompt + skillsPrompt
             val llmMessages = buildLlmMessages(systemPrompt)
 
             AgentService.start(appContext)
-            agentRunManager.startRun(convId, llmMessages, config)
+            agentRunManager.startRun(
+                conversationId = convId,
+                conversationMessages = llmMessages,
+                config = config,
+                // Null → FileAccessManager falls back to settings working directory.
+                scopedFolderUri = folderUri,
+            )
         }
     }
 

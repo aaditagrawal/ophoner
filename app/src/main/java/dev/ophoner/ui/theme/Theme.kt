@@ -27,8 +27,8 @@ enum class ThemeMode(val displayName: String) {
 /** Exposes whether we're rendering in dark theme so other surfaces can tone themselves. */
 val LocalIsDark = compositionLocalOf { false }
 
-/** The active accent color (already resolved for the current theme mode). */
-val LocalAccent = compositionLocalOf { Color(0xFF007AFF) }
+/** The active accent color (already resolved for the current theme mode). Brand default: orange. */
+val LocalAccent = compositionLocalOf { Color(0xFFFF9500) }
 
 @Composable
 @ReadOnlyComposable
@@ -110,8 +110,8 @@ private fun buildLightScheme(accent: Color) = run {
 @Composable
 fun OphoneTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
-    uiFont: UiFont = UiFont.GEIST_SANS,
-    accent: AccentChoice = AccentChoice.BLUE,
+    uiFont: UiFont = UiFont.DM_MONO,
+    accent: AccentChoice = AccentChoice.ORANGE,
     content: @Composable () -> Unit,
 ) {
     val systemDark = isSystemInDarkTheme()
@@ -136,14 +136,14 @@ fun OphoneTheme(
     }
 
     CompositionLocalProvider(
-        LocalMonoFontFamily provides GeistMono,
+        LocalMonoFontFamily provides DmMono,
         LocalIsDark provides darkTheme,
         LocalAccent provides accentColor,
     ) {
         MaterialExpressiveTheme(
             colorScheme = colorScheme,
             motionScheme = MotionScheme.expressive(),
-            typography = ophoneTypography(uiFont.toFontFamily()),
+            typography = ophoneTypography(uiFont.toFontFamily(), uiFont.isMono),
             content = content,
         )
     }

@@ -13,28 +13,21 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import javax.inject.Inject
 
-class FileWriteTool @Inject constructor(
+class FileDeleteTool @Inject constructor(
     private val fileAccessManager: FileAccessManager,
 ) : ToolExecutor {
     override val definition = Tool(
-        name = "file_write",
-        description = "Write content to a file at the given relative path within the working directory (creates or overwrites)",
+        name = "file_delete",
+        description = "Delete a file or empty directory at the given relative path within the working directory",
         parameters = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
                 putJsonObject("path") {
                     put("type", "string")
-                    put("description", "Relative path to the file within the working directory")
-                }
-                putJsonObject("content") {
-                    put("type", "string")
-                    put("description", "Content to write to the file")
+                    put("description", "Relative path to delete within the working directory")
                 }
             }
-            putJsonArray("required") {
-                add(JsonPrimitive("path"))
-                add(JsonPrimitive("content"))
-            }
+            putJsonArray("required") { add(JsonPrimitive("path")) }
         },
     )
 
@@ -42,12 +35,7 @@ class FileWriteTool @Inject constructor(
         return try {
             val path = arguments["path"]?.jsonPrimitive?.content
                 ?: return ToolResult(toolUseId, "Missing required parameter: path", isError = true)
-            val content = arguments["content"]?.jsonPrimitive?.content
-                ?: return ToolResult(toolUseId, "Missing required parameter: content", isError = true)
 
-            // Defense-in-depth: validate path before handing off to FileAccessManager.
-            // FileAccessManager already scopes writes to a user-selected DocumentFile
-            // tree via SAF, but we reject obviously dangerous inputs early.
             validatePath(path)?.let { reason ->
                 return ToolResult(
                     toolUseId,
@@ -56,10 +44,14 @@ class FileWriteTool @Inject constructor(
                 )
             }
 
-            fileAccessManager.writeFile(path, content)
-            ToolResult(toolUseId, "File written: $path (${content.length} chars)")
+            val deleted = fileAccessManager.deleteFile(path)
+            if (deleted) {
+                ToolResult(toolUseId, "Deleted: $path")
+            } else {
+                ToolResult(toolUseId, "Failed to delete: $path", isError = true)
+            }
         } catch (e: Exception) {
-            ToolResult(toolUseId, "Error writing file: ${e.message}", isError = true)
+            ToolResult(toolUseId, "Error deleting file: ${e.message}", isError = true)
         }
     }
 }

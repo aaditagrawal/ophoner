@@ -2,9 +2,13 @@ package dev.ophoner.tools.impl
 
 import android.util.Log
 import dev.ophoner.tools.Tool
+import dev.ophoner.tools.ToolExecutionContext
 import dev.ophoner.tools.ToolExecutor
 import dev.ophoner.tools.ToolResult
 import dev.ophoner.tools.sandbox.SandboxedShell
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -42,13 +46,13 @@ class ShellExecuteTool @Inject constructor(
         },
     )
 
-    // TODO: add user confirmation prompt — this pass only covers allowlist/denylist
-    //  and audit logging. UI plumbing for a human-in-the-loop approval flow is
-    //  out of scope for this change.
+    // Soft-block: unscoped commands require YOLO mode (or a future confirmation UI).
+    // Hard denylist always applies, even in YOLO mode.
     override suspend fun execute(toolUseId: String, arguments: JsonObject): ToolResult {
         val command = arguments["command"]?.jsonPrimitive?.content
             ?: return ToolResult(toolUseId, "Missing required parameter: command", isError = true)
         val timeout = arguments["timeout_ms"]?.jsonPrimitive?.long ?: 30_000L
+        val yolo = currentCoroutineContext()[ToolExecutionContext]?.yoloMode == true
 
         // Policy check before any execution.
         val decision = classifyCommand(command)
@@ -61,8 +65,21 @@ class ShellExecuteTool @Inject constructor(
             )
         }
 
+        val allow = decision as CommandDecision.Allow
+        if (allow.category == "unscoped" && !yolo) {
+            writeAudit(command, "SOFT_BLOCK(yolo_required)")
+            return ToolResult(
+                toolUseId,
+                "Error: command is not on the shell allowlist. Enable YOLO mode in Settings " +
+                    "(Agent) to auto-allow unscoped shell commands, or use an allowlisted " +
+                    "read-only command (ls, cat, grep, …).",
+                isError = true,
+            )
+        }
+
+        val auditCategory = if (allow.category == "unscoped" && yolo) "yolo/unscoped" else allow.category
         return try {
-            writeAudit(command, "ALLOW(${(decision as CommandDecision.Allow).category})")
+            writeAudit(command, "ALLOW($auditCategory)")
             val result = shell.execute(command, timeoutMs = timeout)
             val modeTag = if (result.privileged) "[shizuku]" else "[sandbox]"
             val output = buildString {
@@ -130,25 +147,27 @@ class ShellExecuteTool @Inject constructor(
         }
     }
 
-    private fun writeAudit(command: String, outcome: String) {
+    private suspend fun writeAudit(command: String, outcome: String) {
         // Best-effort audit logging — failures must not block execution.
-        try {
-            val dir = resolveAuditDir() ?: return
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, "shell_audit.log")
-            val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(Date())
-            val sanitized = command.replace('\n', ' ').replace('\r', ' ')
-            FileWriter(file, /* append = */ true).use { writer ->
-                writer.append(timestamp)
-                writer.append('\t')
-                writer.append(outcome)
-                writer.append('\t')
-                writer.append(sanitized)
-                writer.append('\n')
+        withContext(Dispatchers.IO) {
+            try {
+                val dir = resolveAuditDir() ?: return@withContext
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, "shell_audit.log")
+                val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(Date())
+                val sanitized = command.replace('\n', ' ').replace('\r', ' ')
+                FileWriter(file, /* append = */ true).use { writer ->
+                    writer.append(timestamp)
+                    writer.append('\t')
+                    writer.append(outcome)
+                    writer.append('\t')
+                    writer.append(sanitized)
+                    writer.append('\n')
+                }
+            } catch (t: Throwable) {
+                // Swallow — logging must never block execution or surface to the LLM.
+                Log.w("ShellExecuteTool", "audit log write failed: ${t.message}")
             }
-        } catch (t: Throwable) {
-            // Swallow — logging must never block execution or surface to the LLM.
-            Log.w("ShellExecuteTool", "audit log write failed: ${t.message}")
         }
     }
 

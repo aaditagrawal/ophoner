@@ -4,14 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,19 +35,17 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.ViewHeadline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,7 +72,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -86,23 +79,26 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ophoner.data.model.ContentBlock
 import dev.ophoner.data.model.Message
 import dev.ophoner.data.model.MessageRole
-import dev.ophoner.ui.theme.AccentAmber
-import dev.ophoner.ui.theme.AccentBackdrop
-import dev.ophoner.ui.theme.AccentGreen
+import dev.ophoner.ui.components.FolderIconBadge
+import dev.ophoner.ui.util.formatFolderDisplayName
 import dev.ophoner.ui.theme.AccentRed
+import dev.ophoner.ui.theme.accentColor
 import dev.ophoner.ui.theme.chatPalette
 import dev.ophoner.ui.theme.monoFamily
-import kotlinx.serialization.json.jsonObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private val ChromeRadius = 10.dp
+private val BubbleRadius = 12.dp
+private val PanelRadius = 10.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,13 +132,9 @@ fun ChatScreen(
     LaunchedEffect(Unit) { viewModel.refreshProvider() }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // 1. Painted texture behind everything
-        AccentBackdrop()
-
-        // 2. Scaffold renders chat content + scrollable list, transparent so blobs read through.
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
-            containerColor = Color.Transparent,
+            containerColor = MaterialTheme.colorScheme.background,
         ) { innerPadding ->
             val layoutDirection = LocalLayoutDirection.current
             val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -162,18 +154,22 @@ fun ChatScreen(
                         top = statusBarTop + 56.dp,
                         bottom = 110.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     if (uiState.messages.isEmpty() && !uiState.isAgentRunning) {
-                        item { EmptyState() }
+                        item(key = "empty_state") { EmptyState() }
                     }
 
-                    items(uiState.messages, key = { it.id }) { message ->
+                    items(
+                        items = uiState.messages,
+                        key = { it.id },
+                        contentType = { it.role },
+                    ) { message ->
                         MessageItem(message)
                     }
 
                     if (uiState.streamingText.isNotEmpty() || uiState.activeToolCalls.isNotEmpty()) {
-                        item {
+                        item(key = "streaming") {
                             StreamingResponse(
                                 text = uiState.streamingText,
                                 toolCalls = uiState.activeToolCalls,
@@ -182,14 +178,15 @@ fun ChatScreen(
                     }
 
                     if (uiState.isAgentRunning && uiState.streamingText.isEmpty() && uiState.activeToolCalls.isEmpty()) {
-                        item { ThinkingIndicator() }
+                        item(key = "thinking") { ThinkingIndicator() }
                     }
                 }
 
-                // 3. Floating composer at the bottom — frosted glass
                 InputBar(
                     isAgentRunning = uiState.isAgentRunning,
                     hasProvider = uiState.providerConfig != null,
+                    draftText = uiState.draftText,
+                    onDraftConsumed = { viewModel.clearDraftText() },
                     onSend = { viewModel.sendMessage(it) },
                     onCancel = { viewModel.cancelAgent() },
                     modifier = Modifier
@@ -199,7 +196,6 @@ fun ChatScreen(
             }
         }
 
-        // 4. Floating top bar — frosted glass over the scroll
         FrostedTopBar(
             folderName = uiState.scopedFolderName?.takeIf {
                 uiState.conversationMode == dev.ophoner.data.model.ConversationMode.FOLDER
@@ -223,31 +219,34 @@ private fun FrostedTopBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        bg.copy(alpha = 0.92f),
-                        bg.copy(alpha = 0.78f),
-                        bg.copy(alpha = 0.0f),
-                    ),
-                )
-            )
+            .background(bg)
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
         TopAppBar(
             title = {
                 if (folderName != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.FolderOpen,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(15.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
+                    val accent = accentColor()
+                    val chipShape = RoundedCornerShape(ChromeRadius)
+                    Row(
+                        modifier = Modifier
+                            .clip(chipShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                chipShape,
+                            )
+                            .padding(start = 6.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FolderIconBadge(tint = accent, expanded = true, size = 22.dp)
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            text = folderName,
-                            style = MaterialTheme.typography.labelLarge,
+                            text = formatFolderDisplayName(folderName),
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontFamily = monoFamily(),
+                                fontWeight = FontWeight.Medium,
+                            ),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                         )
@@ -256,12 +255,12 @@ private fun FrostedTopBar(
             },
             navigationIcon = {
                 IconButton(onClick = onOpenConversations) {
-                    Icon(Icons.Outlined.Menu, contentDescription = "Conversations")
+                    Icon(Icons.Outlined.ViewHeadline, contentDescription = "Conversations")
                 }
             },
             actions = {
                 IconButton(onClick = onOpenSettings) {
-                    Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                    Icon(Icons.Outlined.Tune, contentDescription = "Settings")
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -274,34 +273,38 @@ private fun EmptyState() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 80.dp),
+            .padding(vertical = 96.dp, horizontal = 32.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "o",
-                    style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-            }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.widthIn(max = 320.dp),
+        ) {
+            val accent = accentColor()
+            Text(
+                "o",
+                style = MaterialTheme.typography.displayMedium.copy(
+                    fontFamily = monoFamily(),
+                    fontWeight = FontWeight.Medium,
+                ),
+                color = accent,
+            )
             Spacer(Modifier.height(20.dp))
             Text(
                 "Hey there",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = monoFamily(),
+                    fontWeight = FontWeight.Medium,
+                ),
                 color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
-                "Ask anything — I can browse, read files, run shell\ncommands, and more.",
+                "Ask anything — I can browse, read files, run shell commands, and more.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
         }
     }
@@ -336,10 +339,17 @@ private fun MessageItem(message: Message) {
                     if (isUser) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(0.85f)
-                                .clip(RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp))
+                                .fillMaxWidth(0.82f)
+                                .clip(
+                                    RoundedCornerShape(
+                                        BubbleRadius,
+                                        BubbleRadius,
+                                        4.dp,
+                                        BubbleRadius,
+                                    ),
+                                )
                                 .background(palette.userBubble)
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
                         ) {
                             Text(
                                 text = block.text,
@@ -348,12 +358,25 @@ private fun MessageItem(message: Message) {
                             )
                         }
                     } else {
-                        MarkdownText(
-                            text = block.text,
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 2.dp, vertical = 2.dp),
-                        )
+                                .fillMaxWidth(0.92f)
+                                .clip(
+                                    RoundedCornerShape(
+                                        BubbleRadius,
+                                        BubbleRadius,
+                                        BubbleRadius,
+                                        4.dp,
+                                    ),
+                                )
+                                .background(palette.assistantBubble)
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                        ) {
+                            MarkdownText(
+                                text = block.text,
+                                color = palette.onAssistantBubble,
+                            )
+                        }
                     }
                 }
                 is ContentBlock.ToolUse -> {
@@ -411,7 +434,7 @@ private fun MessageFooter(
         },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val labelColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+        val labelColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
         val parts = buildList {
             add(formatClock(timestamp))
             stats?.let {
@@ -421,7 +444,7 @@ private fun MessageFooter(
         }
         Text(
             text = parts.joinToString(" · "),
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontFamily = monoFamily()),
             color = labelColor,
         )
         if (copyText != null) {
@@ -429,7 +452,7 @@ private fun MessageFooter(
             Box(
                 modifier = Modifier
                     .size(22.dp)
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(6.dp))
                     .clickable { onCopy(copyText) },
                 contentAlignment = Alignment.Center,
             ) {
@@ -461,120 +484,25 @@ private fun StreamingResponse(
                 isExecuting = tc.isExecuting,
                 isError = tc.isError,
             )
-            Spacer(Modifier.height(4.dp))
         }
 
         if (text.isNotEmpty()) {
-            MarkdownText(
-                text = text,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 2.dp, vertical = 2.dp),
-            )
-        }
-    }
-}
-
-@Composable
-fun ToolCallCard(
-    name: String,
-    arguments: String,
-    result: String?,
-    isExecuting: Boolean,
-    isError: Boolean,
-) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    val palette = chatPalette()
-
-    Column(modifier = Modifier.padding(vertical = 2.dp)) {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .background(palette.toolCardBg)
-                .border(0.5.dp, palette.toolCardBorder, RoundedCornerShape(10.dp))
-                .clickable { if (!isExecuting) expanded = !expanded }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+            val palette = chatPalette()
             Box(
                 modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(
-                        when {
-                            isExecuting -> AccentAmber
-                            isError -> AccentRed
-                            result != null -> AccentGreen
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        }
-                    ),
-            )
-            Spacer(Modifier.width(8.dp))
-
-            Text(
-                text = name,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = monoFamily(),
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-
-            if (isExecuting) {
-                Spacer(Modifier.width(8.dp))
-                LoadingIndicator(
-                    modifier = Modifier.size(14.dp),
-                    color = AccentAmber,
-                )
-            }
-
-            if (!isExecuting && (arguments.isNotEmpty() || result != null)) {
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (expanded) "−" else "+",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = expanded,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(start = 10.dp, top = 4.dp)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(palette.codeBlockBg)
-                    .padding(10.dp),
+                    .fillMaxWidth(0.92f)
+                    .clip(
+                        RoundedCornerShape(
+                            BubbleRadius,
+                            BubbleRadius,
+                            BubbleRadius,
+                            4.dp,
+                        ),
+                    )
+                    .background(palette.assistantBubble)
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
             ) {
-                if (arguments.isNotEmpty() && arguments != "{}") {
-                    Text(
-                        text = remember(arguments) { formatJson(arguments) },
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = monoFamily(),
-                            fontSize = 11.sp,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 8,
-                    )
-                }
-                if (result != null) {
-                    if (arguments.isNotEmpty() && arguments != "{}") {
-                        Spacer(Modifier.height(6.dp))
-                    }
-                    Text(
-                        text = result.take(400).let { if (result.length > 400) "$it..." else it },
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = monoFamily(),
-                            fontSize = 11.sp,
-                        ),
-                        color = if (isError) AccentRed else palette.codeText,
-                        maxLines = 12,
-                    )
-                }
+                MarkdownText(text = text, color = palette.onAssistantBubble)
             }
         }
     }
@@ -582,18 +510,30 @@ fun ToolCallCard(
 
 @Composable
 private fun ThinkingIndicator() {
+    val palette = chatPalette()
+    val shape = RoundedCornerShape(PanelRadius)
+
     Row(
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+        modifier = Modifier
+            .padding(vertical = 4.dp)
+            .clip(shape)
+            .background(palette.assistantBubble)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.28f),
+                shape,
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         LoadingIndicator(
-            modifier = Modifier.size(16.dp),
-            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp),
+            color = accentColor(),
         )
-        Spacer(Modifier.width(10.dp))
         Text(
             "Thinking…",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = monoFamily()),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -603,6 +543,8 @@ private fun ThinkingIndicator() {
 private fun InputBar(
     isAgentRunning: Boolean,
     hasProvider: Boolean,
+    draftText: String? = null,
+    onDraftConsumed: () -> Unit = {},
     onSend: (String) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
@@ -611,6 +553,15 @@ private fun InputBar(
     var isFocused by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val accent = accentColor()
+
+    LaunchedEffect(draftText) {
+        val draft = draftText ?: return@LaunchedEffect
+        if (draft.isNotEmpty()) {
+            text = draft
+            onDraftConsumed()
+        }
+    }
 
     val isExpanded by remember(text, isFocused) {
         derivedStateOf { isFocused || text.isNotBlank() }
@@ -618,49 +569,38 @@ private fun InputBar(
 
     BackHandler(enabled = isExpanded) { focusManager.clearFocus() }
 
-    val verticalPadding by animateDpAsState(
-        targetValue = if (isExpanded) 16.dp else 12.dp,
+    val minHeight by animateDpAsState(
+        targetValue = if (isExpanded) 180.dp else 0.dp,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "input-vpad",
-    )
-    val horizontalPadding by animateDpAsState(
-        targetValue = if (isExpanded) 12.dp else 16.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "input-hpad",
-    )
-    val cornerRadius by animateDpAsState(
-        targetValue = if (isExpanded) 28.dp else 26.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "input-radius",
+        label = "input-min-height",
     )
 
     val bg = MaterialTheme.colorScheme.background
+    val panelShape = RoundedCornerShape(PanelRadius)
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                if (isExpanded) {
-                    Brush.verticalGradient(listOf(Color.Transparent, bg.copy(alpha = 0.7f)))
-                } else {
-                    Brush.verticalGradient(listOf(Color.Transparent, bg.copy(alpha = 0.55f)))
-                }
-            )
-            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+            .background(bg)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        val surfaceColor = MaterialTheme.colorScheme.surfaceContainerLow
-        val containerColor = if (isExpanded) surfaceColor else surfaceColor.copy(alpha = 0.78f)
+        val containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        val borderColor = if (isFocused) {
+            accent.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+        }
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = if (isExpanded) 280.dp else 0.dp)
-                .clip(RoundedCornerShape(cornerRadius))
+                .heightIn(min = minHeight)
+                .clip(panelShape)
                 .background(containerColor)
                 .border(
-                    width = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = if (isExpanded) 0.5f else 0.35f),
-                    shape = RoundedCornerShape(cornerRadius),
+                    width = 1.dp,
+                    color = borderColor,
+                    shape = panelShape,
                 ),
         ) {
             if (isExpanded) {
@@ -671,10 +611,10 @@ private fun InputBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(
-                        start = 16.dp,
-                        end = 6.dp,
-                        top = if (isExpanded) 8.dp else 4.dp,
-                        bottom = 6.dp,
+                        start = 14.dp,
+                        end = 8.dp,
+                        top = if (isExpanded) 4.dp else 4.dp,
+                        bottom = 8.dp,
                     ),
                 verticalAlignment = Alignment.Bottom,
             ) {
@@ -691,8 +631,8 @@ private fun InputBar(
                         Text(
                             text = if (!hasProvider) "Configure a provider first…"
                             else "Message Ophoner…",
-                            style = textStyle,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            style = textStyle.copy(fontFamily = monoFamily()),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                         )
                     }
                     BasicTextField(
@@ -703,7 +643,7 @@ private fun InputBar(
                             .focusRequester(focusRequester)
                             .onFocusChanged { isFocused = it.isFocused },
                         textStyle = textStyle,
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        cursorBrush = SolidColor(accent),
                         enabled = !isAgentRunning && hasProvider,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                         keyboardActions = KeyboardActions(),
@@ -719,13 +659,13 @@ private fun InputBar(
                         icon = Icons.Outlined.Stop,
                         contentDescription = "Cancel",
                         onClick = onCancel,
-                        background = AccentRed.copy(alpha = 0.15f),
+                        background = AccentRed.copy(alpha = 0.14f),
                         tint = AccentRed,
                     )
                 } else {
                     val canSend = text.isNotBlank() && hasProvider
                     SendButton(
-                        icon = Icons.AutoMirrored.Filled.Send,
+                        icon = Icons.Outlined.ArrowUpward,
                         contentDescription = "Send",
                         onClick = {
                             if (canSend) {
@@ -735,10 +675,10 @@ private fun InputBar(
                             }
                         },
                         enabled = canSend,
-                        background = if (canSend) MaterialTheme.colorScheme.primary
+                        background = if (canSend) accent
                         else MaterialTheme.colorScheme.surfaceContainerHighest,
-                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        tint = if (canSend) Color.White
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                     )
                 }
             }
@@ -751,21 +691,21 @@ private fun ExpandedComposerHeader(onCollapse: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 4.dp),
+            .padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             "New message",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = monoFamily()),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
             modifier = Modifier.weight(1f),
         )
         IconButton(onClick = onCollapse, modifier = Modifier.size(32.dp)) {
             Icon(
-                Icons.Default.Close,
+                Icons.Outlined.Close,
                 contentDescription = "Collapse",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
     }
@@ -780,11 +720,17 @@ private fun SendButton(
     tint: Color,
     enabled: Boolean = true,
 ) {
+    val shape = RoundedCornerShape(ChromeRadius)
     Box(
         modifier = Modifier
             .size(40.dp)
-            .clip(CircleShape)
+            .clip(shape)
             .background(background)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outline.copy(alpha = if (enabled) 0.2f else 0.28f),
+                shape,
+            )
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -794,19 +740,6 @@ private fun SendButton(
             tint = tint,
             modifier = Modifier.size(18.dp),
         )
-    }
-}
-
-private val PrettyJson = kotlinx.serialization.json.Json { prettyPrint = true }
-
-private fun formatJson(json: String): String {
-    return try {
-        val element = PrettyJson.parseToJsonElement(json)
-        PrettyJson.encodeToString(
-            kotlinx.serialization.json.JsonObject.serializer(), element.jsonObject
-        )
-    } catch (_: Exception) {
-        json
     }
 }
 

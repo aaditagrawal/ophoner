@@ -74,9 +74,9 @@ fun MarkdownText(
                         color = palette.codeText,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(palette.codeBlockBg)
-                            .padding(12.dp)
+                            .padding(11.dp)
                             .horizontalScroll(rememberScrollState()),
                     )
                     Spacer(Modifier.height(4.dp))
@@ -92,9 +92,9 @@ fun MarkdownText(
                         color = palette.mathText,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(palette.mathBg)
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 11.dp, vertical = 9.dp)
                             .horizontalScroll(rememberScrollState()),
                     )
                     Spacer(Modifier.height(4.dp))
@@ -137,7 +137,7 @@ private fun MdTable(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(palette.tableHeaderBg),
     ) {
         Column(

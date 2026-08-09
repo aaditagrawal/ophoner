@@ -2,15 +2,18 @@ package dev.ophoner.data.repository
 
 import android.content.Context
 import android.net.Uri
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.ophoner.data.model.PinnedFolder
 import dev.ophoner.data.model.ProviderConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
@@ -32,6 +35,7 @@ class SettingsRepository @Inject constructor(
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val uiFontKey = stringPreferencesKey("ui_font")
     private val accentKey = stringPreferencesKey("accent_color")
+    private val yoloModeKey = booleanPreferencesKey("yolo_mode")
 
     private val prettyJson = Json {
         prettyPrint = true
@@ -60,11 +64,19 @@ class SettingsRepository @Inject constructor(
     }
 
     fun observeUiFont(): Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[uiFontKey] ?: "GEIST_SANS"
+        prefs[uiFontKey] ?: "DM_MONO"
     }
 
     fun observeAccent(): Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[accentKey] ?: "BLUE"
+        prefs[accentKey] ?: "ORANGE"
+    }
+
+    fun observeYoloMode(): Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[yoloModeKey] ?: false
+    }
+
+    suspend fun setYoloMode(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[yoloModeKey] = enabled }
     }
 
     suspend fun setThemeMode(mode: String) {
@@ -104,9 +116,11 @@ class SettingsRepository @Inject constructor(
     suspend fun exportProviders(uri: Uri): Result<Int> = runCatching {
         val providers = observeProviders().first()
         val jsonStr = prettyJson.encodeToString(providers)
-        context.contentResolver.openOutputStream(uri)?.use { out ->
-            out.write(jsonStr.toByteArray())
-        } ?: throw IllegalStateException("Could not open output stream")
+        withContext(Dispatchers.IO) {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(jsonStr.toByteArray())
+            } ?: throw IllegalStateException("Could not open output stream")
+        }
         providers.size
     }
 
@@ -116,9 +130,11 @@ class SettingsRepository @Inject constructor(
      * Returns the number of newly added providers.
      */
     suspend fun importProviders(uri: Uri): Result<Int> = runCatching {
-        val rawInput = context.contentResolver.openInputStream(uri)?.use { input ->
-            input.bufferedReader().readText()
-        } ?: throw IllegalStateException("Could not open input stream")
+        val rawInput = withContext(Dispatchers.IO) {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                input.bufferedReader().readText()
+            } ?: throw IllegalStateException("Could not open input stream")
+        }
 
         val incoming = json.decodeFromString<List<ProviderConfig>>(rawInput)
         val existing = observeProviders().first()

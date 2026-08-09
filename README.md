@@ -5,12 +5,16 @@ An on-device Android AI agent. Chat with Claude or any OpenAI-compatible LLM and
 ## Core features
 
 - **Multi-provider chat** — Claude (native streaming) and any OpenAI-compatible endpoint
-- **Tools** — `shell_execute`, `file_read`, `file_write`, `file_list`, `web_fetch`, `web_search`, `device_control`
-- **Folder chats** — scope a conversation to a folder via SAF; the agent stays inside it
+- **Tools** — `shell_execute`, `file_read`, `file_write`, `file_list`, `file_delete`, `file_move`, `web_fetch`, `web_search`, `device_control`, `intent_launch`, `app_list`
+- **YOLO mode** — settings toggle that auto-approves soft tool gates and raises the agent iteration cap (dangerous; use with care)
+- **Share target** — share text into a new chat via Android `ACTION_SEND`
+- **Folder chats** — SAF-scoped conversations; file tools enforce the folder root (not just the prompt)
+- **Folder skills** — loads `SKILL.md` and `.ophoner/skills/*.md` from the active folder into the system prompt
 - **Conversation history** — persisted locally, grouped by folder vs general, sorted by recency
 - **Shizuku support** — ADB-level shell when Shizuku is installed and granted
+- **Appearance** — Teenage Engineering–inspired morphic UI; orange accent + **DM Mono** / DM Sans
 
-Built with Jetpack Compose, Material 3, Hilt, Room.
+Built with Jetpack Compose, Material 3 Expressive, Hilt, Room.
 
 ## Build
 

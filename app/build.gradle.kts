@@ -63,6 +63,14 @@ android {
         compose = true
         buildConfig = true
     }
+
+    lint {
+        abortOnError = true
+        warningsAsErrors = false
+        checkReleaseBuilds = true
+        // Keep CI signal high without drowning in legacy style noise.
+        disable += setOf("ObsoleteLintCustomCheck", "GradleDependency")
+    }
 }
 
 kotlin {

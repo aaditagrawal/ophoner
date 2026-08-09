@@ -1,25 +1,25 @@
 [versions]
-agp = "9.0.1"
-kotlin = "2.2.10"
-ksp = "2.2.10-2.0.2"
-compose-bom = "2025.11.00"
+agp = "9.3.1"
+kotlin = "2.4.10"
+ksp = "2.3.11"
+compose-bom = "2026.06.01"
 # Pinned outside the BOM: Material 3 Expressive APIs
 # (MaterialExpressiveTheme, MotionScheme, LoadingIndicator, MaterialShapes, toShape())
 # are marked `internal` in material3 1.4.x stable and only exposed from 1.5.x alphas.
 # Bump in lockstep once Expressive ships as stable.
-material3 = "1.5.0-alpha17"
-graphics-shapes = "1.0.1"
-hilt = "2.59"
-hilt-navigation-compose = "1.2.0"
-room = "2.7.0"
-datastore = "1.1.2"
-okhttp = "4.12.0"
-coroutines = "1.9.0"
-serialization = "1.7.3"
-navigation = "2.8.5"
-lifecycle = "2.8.7"
-activity-compose = "1.9.3"
-core-ktx = "1.15.0"
+material3 = "1.5.0-alpha25"
+graphics-shapes = "1.1.0"
+hilt = "2.60.1"
+hilt-navigation-compose = "1.4.0"
+room = "2.8.4"
+datastore = "1.2.1"
+okhttp = "5.4.0"
+coroutines = "1.11.0"
+serialization = "1.11.0"
+navigation = "2.9.8"
+lifecycle = "2.11.0"
+activity-compose = "1.13.0"
+core-ktx = "1.19.0"
 
 [libraries]
 # Compose BOM

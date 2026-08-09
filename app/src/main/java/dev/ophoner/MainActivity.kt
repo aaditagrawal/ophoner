@@ -64,9 +64,22 @@ class MainActivity : ComponentActivity() {
 
     private fun handleShareIntent(intent: Intent?, requestNavigation: Boolean) {
         if (intent?.action != Intent.ACTION_SEND) return
-        val type = intent.type ?: return
-        if (!type.startsWith("text/")) return
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        val type = intent.type
+        // Some senders omit MIME type or only put text in ClipData.
+        if (type != null && !type.startsWith("text/") && type != "*/*") return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+            ?: intent.clipData?.let { clip ->
+                buildString {
+                    for (i in 0 until clip.itemCount) {
+                        val itemText = clip.getItemAt(i)?.coerceToText(this@MainActivity)?.toString()
+                        if (!itemText.isNullOrBlank()) {
+                            if (isNotEmpty()) append('\n')
+                            append(itemText)
+                        }
+                    }
+                }.ifBlank { null }
+            }
+            ?: return
         pendingShareText.offer(text, requestNavigation = requestNavigation)
     }
 }

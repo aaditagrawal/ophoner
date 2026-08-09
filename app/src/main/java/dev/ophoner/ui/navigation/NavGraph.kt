@@ -9,7 +9,6 @@ import androidx.navigation.navArgument
 import dev.ophoner.ui.chat.ChatScreen
 import dev.ophoner.ui.conversations.ConversationListScreen
 import dev.ophoner.ui.settings.SettingsScreen
-import java.net.URLDecoder
 import java.net.URLEncoder
 
 object Routes {
@@ -26,7 +25,13 @@ fun OphoneNavGraph(navController: NavHostController) {
         navController = navController,
         startDestination = Routes.CHAT,
     ) {
-        composable(Routes.CHAT) {
+        composable(
+            Routes.CHAT,
+            enterTransition = { pushEnter() },
+            exitTransition = { pushExit() },
+            popEnterTransition = { popEnter() },
+            popExitTransition = { popExit() },
+        ) {
             ChatScreen(
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenConversations = { navController.navigate(Routes.CONVERSATIONS) },
@@ -36,6 +41,10 @@ fun OphoneNavGraph(navController: NavHostController) {
         composable(
             Routes.CHAT_WITH_ID,
             arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
+            enterTransition = { pushEnter() },
+            exitTransition = { pushExit() },
+            popEnterTransition = { popEnter() },
+            popExitTransition = { popExit() },
         ) {
             ChatScreen(
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
@@ -49,20 +58,36 @@ fun OphoneNavGraph(navController: NavHostController) {
                 navArgument("folderUri") { type = NavType.StringType },
                 navArgument("folderName") { type = NavType.StringType },
             ),
-        ) { backStackEntry ->
+            enterTransition = { pushEnter() },
+            exitTransition = { pushExit() },
+            popEnterTransition = { popEnter() },
+            popExitTransition = { popExit() },
+        ) {
             ChatScreen(
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenConversations = { navController.navigate(Routes.CONVERSATIONS) },
             )
         }
 
-        composable(Routes.SETTINGS) {
+        composable(
+            Routes.SETTINGS,
+            enterTransition = { pushEnter() },
+            exitTransition = { pushExit() },
+            popEnterTransition = { popEnter() },
+            popExitTransition = { popExit() },
+        ) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
             )
         }
 
-        composable(Routes.CONVERSATIONS) {
+        composable(
+            Routes.CONVERSATIONS,
+            enterTransition = { pushEnter() },
+            exitTransition = { pushExit() },
+            popEnterTransition = { popEnter() },
+            popExitTransition = { popExit() },
+        ) {
             ConversationListScreen(
                 onBack = {
                     if (!navController.popBackStack()) {

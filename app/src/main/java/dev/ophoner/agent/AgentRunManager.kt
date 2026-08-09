@@ -6,16 +6,19 @@ import dev.ophoner.data.model.Message
 import dev.ophoner.data.model.MessageRole
 import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.repository.ConversationRepository
+import dev.ophoner.data.repository.SettingsRepository
 import dev.ophoner.di.ApplicationScope
 import dev.ophoner.llm.LlmMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -23,6 +26,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TEXT_DELTA_COALESCE_MS = 50L
 
 data class ActiveToolCallState(
     val id: String,
@@ -45,6 +50,7 @@ data class AgentRunState(
 class AgentRunManager @Inject constructor(
     private val agentLoop: AgentLoop,
     private val conversationRepository: ConversationRepository,
+    private val settingsRepository: SettingsRepository,
     @param:ApplicationScope private val applicationScope: CoroutineScope,
 ) {
     private val _runs = MutableStateFlow<Map<String, AgentRunState>>(emptyMap())
@@ -59,6 +65,7 @@ class AgentRunManager @Inject constructor(
         conversationId: String,
         conversationMessages: List<LlmMessage>,
         config: ProviderConfig,
+        scopedFolderUri: String? = null,
     ) {
         val existingJob = jobs[conversationId]
         if (existingJob?.isActive == true) return
@@ -75,8 +82,35 @@ class AgentRunManager @Inject constructor(
         job = applicationScope.launch(start = CoroutineStart.LAZY) {
             val streamedText = StringBuilder()
             var streamStartedAt: Long? = null
+            var coalesceJob: Job? = null
+            var streamingDirty = false
+
+            fun publishStreamingText() {
+                if (!streamingDirty) return
+                streamingDirty = false
+                val snapshot = streamedText.toString()
+                updateRun(conversationId) { it.copy(streamingText = snapshot) }
+            }
+
+            fun scheduleStreamingTextPublish() {
+                // Leading-edge window: first dirty delta starts a ~50ms timer; further
+                // deltas in that window only mutate streamedText (no extra StateFlow churn).
+                if (coalesceJob?.isActive == true) return
+                coalesceJob = launch {
+                    delay(TEXT_DELTA_COALESCE_MS)
+                    coalesceJob = null
+                    publishStreamingText()
+                }
+            }
+
+            fun flushPendingStreamingText() {
+                coalesceJob?.cancel()
+                coalesceJob = null
+                publishStreamingText()
+            }
 
             suspend fun flushIteration() {
+                flushPendingStreamingText()
                 val state = _runs.value[conversationId] ?: return
                 val text = streamedText.toString()
                 if (text.isEmpty() && state.activeToolCalls.isEmpty()) return
@@ -119,16 +153,23 @@ class AgentRunManager @Inject constructor(
             }
 
             try {
-                agentLoop.run(conversationMessages, config).collect { event ->
+                // Snapshot YOLO at run start so mid-run toggles don't flip soft gates.
+                val yoloMode = settingsRepository.observeYoloMode().first()
+                agentLoop.run(
+                    conversationMessages = conversationMessages,
+                    config = config,
+                    scopedFolderUri = scopedFolderUri,
+                    yoloMode = yoloMode,
+                ).collect { event ->
                     when (event) {
                         is AgentEvent.TextDelta -> {
                             if (streamStartedAt == null) streamStartedAt = System.currentTimeMillis()
                             streamedText.append(event.text)
-                            updateRun(conversationId) {
-                                it.copy(streamingText = streamedText.toString())
-                            }
+                            streamingDirty = true
+                            scheduleStreamingTextPublish()
                         }
                         is AgentEvent.ToolCallStarted -> {
+                            flushPendingStreamingText()
                             updateRun(conversationId) {
                                 it.copy(activeToolCalls = it.activeToolCalls + ActiveToolCallState(
                                     id = event.id,

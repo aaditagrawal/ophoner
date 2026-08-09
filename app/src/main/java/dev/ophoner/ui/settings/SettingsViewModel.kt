@@ -27,11 +27,13 @@ data class SettingsUiState(
     val activeProviderId: String? = null,
     val workingDirUri: String? = null,
     val workingDirDisplay: String? = null,
+    val systemPrompt: String = "",
     val importExportMessage: String? = null,
     val shizukuStatus: ShizukuStatus = ShizukuStatus.NOT_INSTALLED,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val uiFont: UiFont = UiFont.GEIST_SANS,
-    val accent: AccentChoice = AccentChoice.BLUE,
+    val uiFont: UiFont = UiFont.DM_MONO,
+    val accent: AccentChoice = AccentChoice.ORANGE,
+    val yoloMode: Boolean = false,
 )
 
 @HiltViewModel
@@ -55,17 +57,24 @@ class SettingsViewModel @Inject constructor(
             ) { themeRaw, fontRaw, accentRaw ->
                 Triple(
                     runCatching { ThemeMode.valueOf(themeRaw) }.getOrDefault(ThemeMode.SYSTEM),
-                    runCatching { UiFont.valueOf(fontRaw) }.getOrDefault(UiFont.GEIST_SANS),
-                    runCatching { AccentChoice.valueOf(accentRaw) }.getOrDefault(AccentChoice.BLUE),
+                    UiFont.parse(fontRaw),
+                    runCatching { AccentChoice.valueOf(accentRaw) }.getOrDefault(AccentChoice.ORANGE),
                 )
             }
+
+            val agentPrefs = combine(
+                settingsRepository.observeSystemPrompt(),
+                settingsRepository.observeYoloMode(),
+            ) { systemPrompt, yoloMode -> systemPrompt to yoloMode }
 
             combine(
                 settingsRepository.observeProviders(),
                 settingsRepository.observeActiveProviderId(),
                 settingsRepository.observeWorkingDirectoryUri(),
+                agentPrefs,
                 appearance,
-            ) { providers, activeId, dirUri, appearancePrefs ->
+            ) { providers, activeId, dirUri, agent, appearancePrefs ->
+                val (systemPrompt, yoloMode) = agent
                 val (themeMode, uiFont, accent) = appearancePrefs
                 _uiState.value.copy(
                     providers = providers,
@@ -74,9 +83,11 @@ class SettingsViewModel @Inject constructor(
                     workingDirDisplay = dirUri?.let { uri ->
                         Uri.parse(uri).lastPathSegment?.replace("primary:", "/")
                     },
+                    systemPrompt = systemPrompt,
                     themeMode = themeMode,
                     uiFont = uiFont,
                     accent = accent,
+                    yoloMode = yoloMode,
                 )
             }.collect { state -> _uiState.value = state }
         }
@@ -129,6 +140,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setSystemPrompt(prompt: String) {
+        viewModelScope.launch {
+            settingsRepository.setSystemPrompt(prompt)
+        }
+    }
+
     fun exportProviders(uri: Uri) {
         viewModelScope.launch {
             settingsRepository.exportProviders(uri)
@@ -169,6 +186,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setAccent(accent: AccentChoice) {
         viewModelScope.launch { settingsRepository.setAccent(accent.name) }
+    }
+
+    fun setYoloMode(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setYoloMode(enabled) }
     }
 
     fun refreshShizukuStatus() {

@@ -1,13 +1,15 @@
 package dev.ophoner.ui.theme
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 
 /**
- * Theme-aware palette for chat surfaces. Reads from MaterialTheme + LocalIsDark
+ * Theme-aware palette for chat surfaces. Reads LocalIsDark + LocalAccent
  * so light/dark + accent picks propagate without re-plumbing every call site.
+ *
+ * Tool cards stay flat/solid (hairline border, no glass translucency).
+ * User bubbles keep accent fill for turn readability against panel surfaces.
  */
 data class ChatPalette(
     val userBubble: Color,
@@ -33,31 +35,31 @@ fun chatPalette(): ChatPalette {
         ChatPalette(
             userBubble = accent,
             onUserBubble = Color.White,
-            assistantBubble = Color.Transparent,
+            assistantBubble = AssistantBubble,
             onAssistantBubble = TextPrimary,
-            toolCardBg = DarkSurface.copy(alpha = 0.7f),
-            toolCardBorder = DarkBorder,
-            codeBlockBg = Color(0xFF161618),
-            codeText = Color(0xFFE8E8EA),
+            toolCardBg = ToolCardBg,
+            toolCardBorder = ToolCardBorder,
+            codeBlockBg = CodeBlockBg,
+            codeText = Color(0xFFE8E4DC),
             mathText = accent,
             mathBg = accent.copy(alpha = 0.12f),
             tableHeaderBg = DarkSurface,
-            tableRowAltBg = DarkSurfaceVariant.copy(alpha = 0.5f),
+            tableRowAltBg = DarkSurfaceVariant,
         )
     } else {
         ChatPalette(
             userBubble = accent,
             onUserBubble = Color.White,
-            assistantBubble = Color.Transparent,
+            assistantBubble = LightAssistantBubble,
             onAssistantBubble = LightTextPrimary,
-            toolCardBg = LightSurface.copy(alpha = 0.85f),
-            toolCardBorder = LightBorder,
-            codeBlockBg = LightSurface,
-            codeText = Color(0xFF1C1C1E),
+            toolCardBg = LightToolCardBg,
+            toolCardBorder = LightToolCardBorder,
+            codeBlockBg = LightCodeBlockBg,
+            codeText = Color(0xFF1A1A18),
             mathText = accent,
             mathBg = accent.copy(alpha = 0.10f),
             tableHeaderBg = LightSurface,
-            tableRowAltBg = LightSurfaceVariant.copy(alpha = 0.6f),
+            tableRowAltBg = LightSurfaceVariant,
         )
     }
 }

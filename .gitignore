@@ -45,3 +45,5 @@ Thumbs.db
 
 # User-generated schema exports (keep the folder in git once populated if desired)
 # app/schemas/
+.tmp-screens/
+.antigravitycli/

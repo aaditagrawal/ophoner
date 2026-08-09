@@ -2,9 +2,15 @@ package dev.ophoner.ui.conversations
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,24 +26,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -53,7 +55,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,22 +66,25 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ophoner.data.model.Conversation
 import dev.ophoner.data.model.ConversationMode
-import dev.ophoner.data.model.PinnedFolder
+import dev.ophoner.ui.components.FolderIconBadge
+import dev.ophoner.ui.components.GroupedSection
+import dev.ophoner.ui.util.formatFolderDisplayName
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+// Hash palette for folder badges — one rule for the list; no accent conflict.
 private val FolderPalette = listOf(
-    Color(0xFF3B82F6), // blue
-    Color(0xFFEF4444), // red
-    Color(0xFF22C55E), // green
-    Color(0xFFF59E0B), // amber
-    Color(0xFF06B6D4), // cyan
-    Color(0xFFA855F7), // purple
-    Color(0xFFEC4899), // pink
-    Color(0xFF10B981), // emerald
+    Color(0xFF4F8FCC), // dusty blue
+    Color(0xFFD96B6B), // dusty rose
+    Color(0xFF6BAE7A), // sage
+    Color(0xFFD9A24A), // amber-tan
+    Color(0xFF5FA9AD), // muted teal
+    Color(0xFF9B7BC4), // lavender
+    Color(0xFFD58BAE), // dusty pink
+    Color(0xFF7DA876), // moss
 )
 
 private fun folderColor(name: String): Color {
@@ -84,6 +92,9 @@ private fun folderColor(name: String): Color {
     val idx = ((name.hashCode().toLong() % FolderPalette.size) + FolderPalette.size) % FolderPalette.size
     return FolderPalette[idx.toInt()]
 }
+
+private val ControlCorner = RoundedCornerShape(10.dp)
+private val RowCorner = RoundedCornerShape(10.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,7 +129,7 @@ fun ConversationListScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = "Back")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -129,21 +140,22 @@ fun ConversationListScreen(
         floatingActionButton = {
             Column(
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SmallFloatingActionButton(
+                TeSquareControl(
                     onClick = { folderPickerLauncher.launch(null) },
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    contentDescription = "New folder chat",
                 ) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = "New folder chat")
+                    Icon(
+                        Icons.Outlined.CreateNewFolder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
-                ExtendedFloatingActionButton(
+                TePrimaryControl(
                     onClick = onNewConversation,
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text("New chat") },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    label = "New chat",
                 )
             }
         },
@@ -172,43 +184,65 @@ fun ConversationListScreen(
                 contentPadding = PaddingValues(
                     top = padding.calculateTopPadding() + 4.dp,
                     bottom = padding.calculateBottomPadding() + 96.dp,
-                    start = 8.dp,
-                    end = 8.dp,
+                    start = 16.dp,
+                    end = 16.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 if (projects.isNotEmpty()) {
                     item("header-projects") { SectionLabel("Projects") }
-
-                    for (project in projects) {
-                        val expanded = expandedFolders[project.key] ?: false
-                        val color = folderColor(project.name)
-                        item("folder-${project.key}") {
-                            FolderRow(
-                                name = project.name,
-                                count = project.chats.size,
-                                color = color,
-                                expanded = expanded,
-                                onToggle = { expandedFolders[project.key] = !expanded },
-                                onNewChat = {
-                                    onNewFolderConversation(project.uri, project.name)
-                                },
-                                onRemove = { viewModel.removeProject(project.uri) },
-                            )
-                        }
-                        if (expanded) {
-                            if (project.chats.isEmpty()) {
-                                item("folder-${project.key}-empty") {
-                                    EmptyProjectHint(accentColor = color)
-                                }
-                            } else {
-                                items(project.chats, key = { "folder-item-${it.id}" }) { conv ->
-                                    FolderChildRow(
-                                        conversation = conv,
-                                        accentColor = color,
-                                        onClick = { onOpenConversation(conv.id) },
-                                        onDelete = { viewModel.deleteConversation(conv.id) },
+                    item("projects-group") {
+                        GroupedSection {
+                            Column {
+                                for ((index, project) in projects.withIndex()) {
+                                    val expanded = expandedFolders[project.key] ?: false
+                                    val color = folderColor(project.name)
+                                    FolderRow(
+                                        name = formatFolderDisplayName(project.name),
+                                        count = project.chats.size,
+                                        color = color,
+                                        expanded = expanded,
+                                        onToggle = { expandedFolders[project.key] = !expanded },
+                                        onNewChat = {
+                                            onNewFolderConversation(project.uri, project.name)
+                                        },
+                                        onRemove = { viewModel.removeProject(project.uri) },
                                     )
+                                    AnimatedVisibility(
+                                        visible = expanded,
+                                        enter = expandVertically(
+                                            animationSpec = spring(
+                                                stiffness = Spring.StiffnessMediumLow,
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                            ),
+                                        ),
+                                        exit = shrinkVertically(
+                                            animationSpec = spring(
+                                                stiffness = Spring.StiffnessMedium,
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                            ),
+                                        ),
+                                    ) {
+                                        if (project.chats.isEmpty()) {
+                                            EmptyProjectHint(accentColor = color)
+                                        } else {
+                                            for (conv in project.chats) {
+                                                FolderChildRow(
+                                                    conversation = conv,
+                                                    accentColor = color,
+                                                    onClick = { onOpenConversation(conv.id) },
+                                                    onDelete = { viewModel.deleteConversation(conv.id) },
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (index < projects.lastIndex && !expanded) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(start = 58.dp),
+                                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                            thickness = 0.5.dp,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -216,20 +250,82 @@ fun ConversationListScreen(
                 }
 
                 if (generalConvs.isNotEmpty()) {
-                    item("header-recents") {
-                        Spacer(Modifier.height(if (projects.isNotEmpty()) 16.dp else 0.dp))
-                        SectionLabel("Recents")
-                    }
-                    items(generalConvs, key = { "general-item-${it.id}" }) { conv ->
-                        RecentRow(
-                            conversation = conv,
-                            onClick = { onOpenConversation(conv.id) },
-                            onDelete = { viewModel.deleteConversation(conv.id) },
-                        )
+                    item("header-recents") { SectionLabel("Recents") }
+                    item("recents-group") {
+                        GroupedSection {
+                            Column {
+                                generalConvs.forEachIndexed { index, conv ->
+                                    RecentRow(
+                                        conversation = conv,
+                                        onClick = { onOpenConversation(conv.id) },
+                                        onDelete = { viewModel.deleteConversation(conv.id) },
+                                    )
+                                    if (index < generalConvs.lastIndex) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(start = 16.dp),
+                                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                            thickness = 0.5.dp,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TePrimaryControl(
+    onClick: () -> Unit,
+    label: String,
+) {
+    Row(
+        modifier = Modifier
+            .clip(ControlCorner)
+            .background(MaterialTheme.colorScheme.primary)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Outlined.Add,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+}
+
+@Composable
+private fun TeSquareControl(
+    onClick: () -> Unit,
+    contentDescription: String,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(ControlCorner)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .border(
+                width = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                shape = ControlCorner,
+            )
+            .semantics { this.contentDescription = contentDescription }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }
 
@@ -240,30 +336,23 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Default.ChatBubbleOutline,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp),
-            )
-        }
-        Spacer(Modifier.height(20.dp))
+        Text(
+            "o",
+            style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(24.dp))
         Text(
             "No chats yet",
             style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             "Start a new chat or open a folder to work with local files.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -273,11 +362,11 @@ private fun SectionLabel(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium.copy(
-            letterSpacing = 0.5.sp,
+            letterSpacing = 0.6.sp,
             fontWeight = FontWeight.Medium,
         ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+        modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
     )
 }
 
@@ -293,7 +382,7 @@ private fun FolderRow(
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
-        animationSpec = tween(durationMillis = 200),
+        animationSpec = tween(durationMillis = 180),
         label = "folder-chevron",
     )
     var confirmRemove by rememberSaveable(name) { mutableStateOf(false) }
@@ -306,18 +395,13 @@ private fun FolderRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RowCorner)
             .clickable(onClick = onToggle)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            Icons.Default.Folder,
-            contentDescription = null,
-            tint = color,
-            modifier = Modifier.size(26.dp),
-        )
-        Spacer(Modifier.width(14.dp))
+        FolderIconBadge(tint = color, expanded = expanded)
+        Spacer(Modifier.width(12.dp))
         Text(
             name,
             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
@@ -332,7 +416,7 @@ private fun FolderRow(
                 modifier = Modifier.size(32.dp),
             ) {
                 Icon(
-                    Icons.Default.Add,
+                    Icons.Outlined.Add,
                     contentDescription = "New chat in $name",
                     tint = color,
                     modifier = Modifier.size(18.dp),
@@ -345,10 +429,10 @@ private fun FolderRow(
                 modifier = Modifier.size(32.dp),
             ) {
                 Icon(
-                    Icons.Default.DeleteOutline,
+                    Icons.Outlined.DeleteOutline,
                     contentDescription = if (confirmRemove) "Confirm remove" else "Remove project",
                     tint = if (confirmRemove) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -356,14 +440,14 @@ private fun FolderRow(
             Text(
                 count.toString(),
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.padding(end = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                modifier = Modifier.padding(end = 6.dp),
             )
         }
         Icon(
-            Icons.Default.KeyboardArrowDown,
+            Icons.Outlined.KeyboardArrowDown,
             contentDescription = if (expanded) "Collapse" else "Expand",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
             modifier = Modifier
                 .size(20.dp)
                 .rotate(rotation),
@@ -376,7 +460,7 @@ private fun EmptyProjectHint(accentColor: Color) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 22.dp, end = 4.dp, top = 2.dp, bottom = 6.dp),
+            .padding(start = 20.dp, end = 4.dp, top = 2.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -384,13 +468,13 @@ private fun EmptyProjectHint(accentColor: Color) {
                 .width(2.dp)
                 .height(28.dp)
                 .clip(RoundedCornerShape(1.dp))
-                .background(accentColor.copy(alpha = 0.35f)),
+                .background(accentColor.copy(alpha = 0.45f)),
         )
         Spacer(Modifier.width(12.dp))
         Text(
             "No chats yet — tap + to start one",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
         )
     }
 }
@@ -405,21 +489,20 @@ private fun FolderChildRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 22.dp, end = 4.dp),
+            .padding(start = 20.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Left vertical accent bar
         Box(
             modifier = Modifier
                 .width(2.dp)
                 .height(36.dp)
                 .clip(RoundedCornerShape(1.dp))
-                .background(accentColor.copy(alpha = 0.35f)),
+                .background(accentColor.copy(alpha = 0.45f)),
         )
         Row(
             modifier = Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RowCorner)
                 .clickable(onClick = onClick)
                 .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -428,14 +511,14 @@ private fun FolderChildRow(
                 Text(
                     conversation.title.ifBlank { "Untitled" },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.95f),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     formatRelativeDate(conversation.updatedAt),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                 )
             }
             DeleteAction(key = conversation.id, onDelete = onDelete)
@@ -452,9 +535,9 @@ private fun RecentRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RowCorner)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -469,7 +552,7 @@ private fun RecentRow(
             Text(
                 formatRelativeDate(conversation.updatedAt),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
             )
         }
         DeleteAction(key = conversation.id, onDelete = onDelete)
@@ -500,7 +583,7 @@ private fun DeleteAction(
         modifier = Modifier.size(36.dp),
     ) {
         Icon(
-            Icons.Default.DeleteOutline,
+            Icons.Outlined.DeleteOutline,
             contentDescription = if (confirm) "Confirm delete" else "Delete",
             tint = if (confirm) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),

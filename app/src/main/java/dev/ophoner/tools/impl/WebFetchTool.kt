@@ -3,6 +3,7 @@ package dev.ophoner.tools.impl
 import dev.ophoner.BuildConfig
 import dev.ophoner.tools.Tool
 import dev.ophoner.tools.ToolExecutor
+import dev.ophoner.tools.ToolOutputLimits
 import dev.ophoner.tools.ToolResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,7 +28,8 @@ class WebFetchTool @Inject constructor(
 ) : ToolExecutor {
     override val definition = Tool(
         name = "web_fetch",
-        description = "Fetch the content of a web page and return its text (HTML stripped)",
+        description = "Fetch the content of a web page and return its text (HTML stripped). " +
+            "Body text is capped at ${ToolOutputLimits.WEB_FETCH_MAX_CHARS} characters.",
         parameters = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
@@ -63,13 +65,22 @@ class WebFetchTool @Inject constructor(
                     if (!response.isSuccessful) {
                         return@withContext "HTTP ${response.code}: ${response.message}"
                     }
-                    response.body?.string() ?: ""
+                    val body = response.body ?: return@withContext ""
+                    // Cap raw bytes before HTML stripping to avoid loading huge responses.
+                    body.source().use { source ->
+                        source.request(ToolOutputLimits.WEB_FETCH_MAX_RAW_BYTES + 1)
+                        val buffer = source.buffer
+                        val toRead = minOf(buffer.size, ToolOutputLimits.WEB_FETCH_MAX_RAW_BYTES)
+                        buffer.readUtf8(toRead)
+                    }
                 }
             }
 
             val text = stripHtml(html)
-            val truncated = if (text.length > 8000) text.take(8000) + "\n\n[truncated]" else text
-            ToolResult(toolUseId, truncated)
+            ToolResult(
+                toolUseId,
+                ToolOutputLimits.truncateWithNotice(text, ToolOutputLimits.WEB_FETCH_MAX_CHARS, "web_fetch"),
+            )
         } catch (e: Exception) {
             ToolResult(toolUseId, "Error fetching URL: ${e.message}", isError = true)
         }

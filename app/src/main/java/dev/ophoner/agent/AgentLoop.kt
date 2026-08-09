@@ -6,14 +6,19 @@ import dev.ophoner.llm.LlmMessage
 import dev.ophoner.llm.LlmProviderFactory
 import dev.ophoner.llm.LlmResponseChunk
 import dev.ophoner.llm.LlmRole
+import dev.ophoner.tools.ToolExecutionContext
 import dev.ophoner.tools.ToolRegistry
 import dev.ophoner.tools.ToolResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -21,6 +26,16 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 const val DEFAULT_MAX_ITERATIONS = 25
+const val YOLO_MAX_ITERATIONS = 40
+
+/** Read-only / idempotent tools safe to run concurrently in one turn. */
+private val PARALLEL_SAFE_TOOLS = setOf(
+    "file_read",
+    "file_list",
+    "web_fetch",
+    "web_search",
+    "app_list",
+)
 
 @Singleton
 class AgentLoop @Inject constructor(
@@ -29,11 +44,40 @@ class AgentLoop @Inject constructor(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * @param scopedFolderUri Optional SAF tree URI for folder-scoped chats.
+     *   When set, file tools resolve paths under this root for the entire run.
+     *   When null, [dev.ophoner.tools.sandbox.FileAccessManager] falls back to
+     *   the global settings working directory.
+     * @param yoloMode When true, soft tool gates / future confirmation prompts
+     *   are skipped and [YOLO_MAX_ITERATIONS] is used unless [maxIterations] is
+     *   explicitly raised higher.
+     */
     fun run(
         conversationMessages: List<LlmMessage>,
         config: ProviderConfig,
         maxIterations: Int = DEFAULT_MAX_ITERATIONS,
+        scopedFolderUri: String? = null,
+        yoloMode: Boolean = false,
     ): Flow<AgentEvent> = flow {
+        val effectiveMax = when {
+            yoloMode && maxIterations <= DEFAULT_MAX_ITERATIONS -> YOLO_MAX_ITERATIONS
+            else -> maxIterations
+        }
+        val toolContext = ToolExecutionContext(
+            rootUri = scopedFolderUri,
+            yoloMode = yoloMode,
+        )
+        withContext(toolContext) {
+            runAgent(conversationMessages, config, effectiveMax)
+        }
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<AgentEvent>.runAgent(
+        conversationMessages: List<LlmMessage>,
+        config: ProviderConfig,
+        maxIterations: Int,
+    ) {
         val provider = providerFactory.create(config)
         val tools = toolRegistry.allTools()
         val messages = conversationMessages.toMutableList()
@@ -109,7 +153,7 @@ class AgentLoop @Inject constructor(
 
             if (hadError) {
                 emit(AgentEvent.Finished)
-                return@flow
+                return
             }
 
             // Build assistant content blocks
@@ -145,31 +189,35 @@ class AgentLoop @Inject constructor(
             // If no tool calls, agent is done
             if (toolCalls.isEmpty()) break
 
-            // Execute tools. Wrap each execution so that an exception thrown by a tool
-            // becomes a structured tool-result the LLM can see and react to on the next
-            // iteration, rather than aborting the entire agent run.
+            // Execute tools. Independent read-only tools in one turn run concurrently;
+            // mutating / shell tools stay sequential (and flush any pending parallel batch first).
             val toolResults = mutableListOf<LlmContentBlock.ToolResult>()
-            for (tc in toolCalls) {
-                emit(AgentEvent.ToolExecuting(tc.id, tc.name))
-                val executor = toolRegistry.getExecutor(tc.name)
-                val result = if (executor != null) {
-                    try {
-                        executor.execute(tc.id, tc.arguments)
-                    } catch (ce: CancellationException) {
-                        throw ce // respect user cancel
-                    } catch (t: Throwable) {
-                        android.util.Log.w("AgentLoop", "Tool ${tc.name} threw", t)
-                        ToolResult(
-                            tc.id,
-                            "Tool '${tc.name}' threw ${t.javaClass.simpleName}: ${t.message ?: "no message"}",
-                            isError = true,
-                        )
+            var i = 0
+            while (i < toolCalls.size) {
+                if (toolCalls[i].name in PARALLEL_SAFE_TOOLS) {
+                    val batchStart = i
+                    while (i < toolCalls.size && toolCalls[i].name in PARALLEL_SAFE_TOOLS) i++
+                    val batch = toolCalls.subList(batchStart, i)
+                    for (tc in batch) {
+                        emit(AgentEvent.ToolExecuting(tc.id, tc.name))
+                    }
+                    // awaitAll preserves deferred order → stable tool_result ordering for the model.
+                    val batchResults = coroutineScope {
+                        batch.map { tc ->
+                            async { executeToolCall(tc) }
+                        }.awaitAll()
+                    }
+                    for ((tc, result) in batch.zip(batchResults)) {
+                        emit(AgentEvent.ToolCompleted(tc.id, result))
+                        toolResults.add(LlmContentBlock.ToolResult(tc.id, result.output, result.isError))
                     }
                 } else {
-                    ToolResult(tc.id, "Unknown tool: ${tc.name}", isError = true)
+                    val tc = toolCalls[i++]
+                    emit(AgentEvent.ToolExecuting(tc.id, tc.name))
+                    val result = executeToolCall(tc)
+                    emit(AgentEvent.ToolCompleted(tc.id, result))
+                    toolResults.add(LlmContentBlock.ToolResult(tc.id, result.output, result.isError))
                 }
-                emit(AgentEvent.ToolCompleted(tc.id, result))
-                toolResults.add(LlmContentBlock.ToolResult(tc.id, result.output, result.isError))
             }
 
             messages.add(LlmMessage(LlmRole.TOOL_RESULT, toolResults))
@@ -177,6 +225,47 @@ class AgentLoop @Inject constructor(
         }
 
         emit(AgentEvent.Finished)
+    }
+
+    private suspend fun executeToolCall(tc: LlmContentBlock.ToolUse): ToolResult {
+        val executor = toolRegistry.getExecutor(tc.name)
+        return if (executor != null) {
+            try {
+                // Hook for a future human-in-the-loop confirmation UI.
+                // YOLO mode auto-approves so gates never block the run.
+                if (!awaitConfirmationIfNeeded()) {
+                    return ToolResult(
+                        tc.id,
+                        "Tool '${tc.name}' denied by user confirmation.",
+                        isError = true,
+                    )
+                }
+                executor.execute(tc.id, tc.arguments)
+            } catch (ce: CancellationException) {
+                throw ce // respect user cancel
+            } catch (t: Throwable) {
+                android.util.Log.w("AgentLoop", "Tool ${tc.name} threw", t)
+                ToolResult(
+                    tc.id,
+                    "Tool '${tc.name}' threw ${t.javaClass.simpleName}: ${t.message ?: "no message"}",
+                    isError = true,
+                )
+            }
+        } else {
+            ToolResult(tc.id, "Unknown tool: ${tc.name}", isError = true)
+        }
+    }
+
+    /**
+     * Confirmation gate placeholder. Returns false only when a future UI denies
+     * the tool. YOLO ([ToolExecutionContext.skipsConfirmation]) always approves.
+     */
+    private suspend fun awaitConfirmationIfNeeded(): Boolean {
+        val ctx = currentCoroutineContext()[ToolExecutionContext]
+        if (ctx?.skipsConfirmation == true) return true
+        // No confirmation UI yet — allow. When added, emit a ConfirmationRequired
+        // event here (include tool name/args) and suspend until the user responds.
+        return true
     }
 }
 

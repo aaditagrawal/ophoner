@@ -25,6 +25,8 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -33,6 +35,9 @@ jobs:
 
       - name: Assemble debug
         run: ./gradlew assembleDebug --no-daemon
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
 
       - name: Android lint
         run: ./gradlew lintDebug --no-daemon

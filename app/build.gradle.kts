@@ -87,6 +87,7 @@ ksp {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     // Compose
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

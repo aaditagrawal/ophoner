@@ -129,6 +129,13 @@ fun ChatScreen(
         }
     }
 
+    LaunchedEffect(uiState.banner) {
+        uiState.banner?.let {
+            snackbarHostState.showSnackbar(it, actionLabel = "Dismiss")
+            viewModel.clearBanner()
+        }
+    }
+
     LaunchedEffect(Unit) { viewModel.refreshProvider() }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {

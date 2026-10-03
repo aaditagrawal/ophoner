@@ -73,10 +73,6 @@ class ConversationRepository @Inject constructor(
         messageDao.insert(message.toEntity())
     }
 
-    suspend fun saveMessages(messages: List<Message>) {
-        messageDao.insertAll(messages.map { it.toEntity() })
-    }
-
     suspend fun getMessages(conversationId: String): List<Message> =
         messageDao.getByConversation(conversationId).map { it.toDomain() }
 

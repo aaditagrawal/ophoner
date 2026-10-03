@@ -24,6 +24,4 @@ interface MessageDao {
     @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
     suspend fun countByConversation(conversationId: String): Int
 
-    @Query("DELETE FROM messages WHERE conversationId = :conversationId")
-    suspend fun deleteByConversation(conversationId: String)
 }

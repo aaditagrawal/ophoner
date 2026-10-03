@@ -192,13 +192,6 @@ class SettingsRepository @Inject constructor(
         }
     }
 
-    suspend fun getActiveProvider(): ProviderConfig? {
-        val prefs = context.dataStore.data.first()
-        val activeId = prefs[activeProviderKey] ?: return null
-        val providers = json.decodeFromString<List<ProviderConfig>>(prefs[providersKey] ?: "[]")
-        return providers.find { it.id == activeId }?.withSecureApiKey()
-    }
-
     fun observePinnedFolders(): Flow<List<PinnedFolder>> = context.dataStore.data.map { prefs ->
         val raw = prefs[pinnedFoldersKey] ?: "[]"
         runCatching { json.decodeFromString<List<PinnedFolder>>(raw) }.getOrDefault(emptyList())

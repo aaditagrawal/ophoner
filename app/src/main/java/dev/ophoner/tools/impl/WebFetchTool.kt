@@ -63,7 +63,7 @@ class WebFetchTool @Inject constructor(
             val html = withContext(Dispatchers.IO) {
                 httpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        return@withContext "HTTP ${response.code}: ${response.message}"
+                        throw java.io.IOException("HTTP ${response.code}: ${response.message}")
                     }
                     val body = response.body ?: return@withContext ""
                     // Cap raw bytes before HTML stripping to avoid loading huge responses.

@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Ophoner"
 include(":app")
+include(":benchmark")

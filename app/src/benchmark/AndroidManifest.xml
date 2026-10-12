@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="Ophoner benchmark" tools:replace="android:label">
+        <activity android:name="dev.ophoner.AgentInteractionActivity" android:exported="true" />
+        <profileable android:shell="true" />
+        <activity android:name="dev.ophoner.PerformanceActivity" android:exported="true" />
+    </application>
+</manifest>

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="accessibility_description">Lets Ophoner read screen controls, tap, type, scroll, and capture screenshots for tasks you request. Screen data may be sent to your selected AI provider. You can disable access in Ophoner or Android settings.</string>
     <string name="app_name">Ophoner</string>
 </resources>

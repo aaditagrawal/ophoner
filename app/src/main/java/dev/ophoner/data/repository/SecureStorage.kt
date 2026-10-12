@@ -42,6 +42,11 @@ class SecureStorage @Inject constructor(
 
     fun getString(key: String): String? = prefs.getString(key, null)
 
+    /** OAuth refresh rotation must reach disk before the new credentials are used. */
+    fun putStringDurably(key: String, value: String?) {
+        check(prefs.edit().putString(key, value).commit()) { "Could not persist encrypted credentials." }
+    }
+
     fun remove(key: String) {
         prefs.edit().remove(key).apply()
     }

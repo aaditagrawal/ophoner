@@ -9,6 +9,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.ophoner.data.model.OAuthTokens
 import dev.ophoner.data.model.PinnedFolder
+import dev.ophoner.data.model.ChatGptSpeed
+import dev.ophoner.data.model.ProviderType
 import dev.ophoner.data.model.ProviderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +30,7 @@ class SettingsRepository @Inject constructor(
     private val json: Json,
     private val secureStorage: SecureStorage,
 ) {
+    private val oauthLock = Any()
     private val providersKey = stringPreferencesKey("providers")
     private val activeProviderKey = stringPreferencesKey("active_provider_id")
     private val workingDirKey = stringPreferencesKey("working_directory_uri")
@@ -65,11 +68,11 @@ class SettingsRepository @Inject constructor(
     }
 
     fun observeUiFont(): Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[uiFontKey] ?: "DM_MONO"
+        prefs[uiFontKey] ?: "DM_SANS"
     }
 
     fun observeAccent(): Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[accentKey] ?: "ORANGE"
+        prefs[accentKey] ?: "BLUE"
     }
 
     fun observeYoloMode(): Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -100,7 +103,7 @@ class SettingsRepository @Inject constructor(
 
         (existingIds - incomingIds).forEach { id ->
             secureStorage.remove(apiKeyPref(id))
-            secureStorage.remove(oauthPref(id))
+            clearOAuthTokens(id)
         }
 
         providers.forEach { provider ->
@@ -114,8 +117,70 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun saveOAuthTokens(providerId: String, tokens: OAuthTokens) {
-        secureStorage.putString(oauthPref(providerId), json.encodeToString(tokens))
+        synchronized(oauthLock) {
+            secureStorage.putString(oauthPref(providerId), json.encodeToString(tokens))
+        }
     }
+
+    /** Switch the active provider and its model atomically, retaining credentials and other settings. */
+    suspend fun selectModel(providerId: String, modelId: String?, addSlug: Boolean = false): ProviderConfig {
+        var selected: ProviderConfig? = null
+        context.dataStore.edit { prefs ->
+            val providers = json.decodeFromString<List<ProviderConfig>>(prefs[providersKey] ?: "[]")
+            val current = providers.firstOrNull { it.id == providerId }
+                ?: error("This provider was removed. Connect a provider in Settings.")
+            val slug = modelId?.trim()?.also { require(it.isNotEmpty()) { "Enter a model slug." } }
+            val updated = current.copy(
+                modelId = slug ?: current.modelId,
+                useLatestModel = slug == null,
+                customModelSlugs = if (addSlug && slug != null) (current.customModelSlugs + slug).distinct()
+                    else current.customModelSlugs,
+            )
+            prefs[providersKey] = json.encodeToString(providers.map { if (it.id == providerId) updated else it })
+            prefs[activeProviderKey] = providerId
+            selected = updated.withSecureApiKey()
+        }
+        return checkNotNull(selected)
+    }
+
+    /** Update only speed, preserving concurrent model edits and the active provider. */
+    suspend fun setChatGptSpeed(providerId: String, speed: ChatGptSpeed) {
+        context.dataStore.edit { prefs ->
+            val providers = json.decodeFromString<List<ProviderConfig>>(prefs[providersKey] ?: "[]")
+            val current = providers.firstOrNull { it.id == providerId }
+                ?: error("This provider was removed. Connect a provider in Settings.")
+            require(current.providerType == ProviderType.CODEX_CHATGPT) {
+                "Speed selection is available for ChatGPT connections."
+            }
+            prefs[providersKey] = json.encodeToString(providers.map {
+                if (it.id == providerId) it.copy(chatGptSpeed = speed) else it
+            })
+        }
+    }
+
+    /** A background catalog refresh must not overwrite a manual edit or recreate a deleted provider. */
+    suspend fun updateAutomaticModel(expected: ProviderConfig, modelId: String): ProviderConfig? {
+        var result: ProviderConfig? = null
+        context.dataStore.edit { prefs ->
+            val providers = json.decodeFromString<List<ProviderConfig>>(prefs[providersKey] ?: "[]")
+            val current = providers.firstOrNull { it.id == expected.id } ?: return@edit
+            if (current != expected.copy(apiKey = "") || !current.useLatestModel) {
+                result = current.withSecureApiKey()
+                return@edit
+            }
+            val updated = current.copy(modelId = modelId)
+            prefs[providersKey] = json.encodeToString(providers.map { if (it.id == updated.id) updated else it })
+            result = updated.withSecureApiKey()
+        }
+        return result
+    }
+
+    fun replaceOAuthTokens(providerId: String, expected: OAuthTokens, replacement: OAuthTokens): Boolean =
+        synchronized(oauthLock) {
+            if (getOAuthTokens(providerId) != expected) return@synchronized false
+            secureStorage.putString(oauthPref(providerId), json.encodeToString(replacement))
+            true
+        }
 
     fun getOAuthTokens(providerId: String): OAuthTokens? {
         val raw = secureStorage.getString(oauthPref(providerId)) ?: return null
@@ -123,7 +188,28 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun clearOAuthTokens(providerId: String) {
-        secureStorage.remove(oauthPref(providerId))
+        synchronized(oauthLock) { secureStorage.remove(oauthPref(providerId)) }
+    }
+
+    /** Credentials must exist before observers can select the new provider. */
+    suspend fun connectChatGpt(config: ProviderConfig, tokens: OAuthTokens) {
+        val previous = getOAuthTokens(config.id)
+        saveOAuthTokens(config.id, tokens)
+        try {
+            context.dataStore.edit { prefs ->
+                val providers = json.decodeFromString<List<ProviderConfig>>(prefs[providersKey] ?: "[]")
+                val sanitized = config.copy(apiKey = "")
+                val updated = if (providers.any { it.id == config.id }) {
+                    providers.map { if (it.id == config.id) sanitized else it }
+                } else providers + sanitized
+                prefs[providersKey] = json.encodeToString(updated)
+                prefs[activeProviderKey] = config.id
+            }
+            secureStorage.remove(apiKeyPref(config.id))
+        } catch (e: Exception) {
+            if (previous == null) clearOAuthTokens(config.id) else saveOAuthTokens(config.id, previous)
+            throw e
+        }
     }
 
     /**

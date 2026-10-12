@@ -17,6 +17,11 @@ import kotlin.coroutines.CoroutineContext
 data class ToolExecutionContext(
     val rootUri: String? = null,
     val yoloMode: Boolean = false,
+    val actionApproved: Boolean = false,
+    /** Stable conversation identifier for provider prompt-cache routing, never credentials. */
+    val cacheKey: String? = null,
+    /** Rechecked on the UI thread to close the dispatcher-hop race with user takeover. */
+    val interactionValid: (() -> Boolean)? = null,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<ToolExecutionContext>
 

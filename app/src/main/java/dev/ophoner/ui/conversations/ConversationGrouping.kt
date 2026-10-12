@@ -34,8 +34,10 @@ internal fun buildProjects(
 
     val uriProjects = allUris.map { uri ->
         val convs = byUri[uri].orEmpty().sortedByDescending { it.updatedAt }
-        val name = convs.firstOrNull()?.scopedFolderName
-            ?: pinnedByUri[uri]?.name
+        // Pinned names come directly from the picker. Older chats may contain
+        // names whose spaces were replaced by '+' during route encoding.
+        val name = pinnedByUri[uri]?.name
+            ?: convs.firstOrNull()?.scopedFolderName
             ?: "folder"
         val latest = convs.maxOfOrNull { it.updatedAt }
             ?: pinnedByUri[uri]?.createdAt

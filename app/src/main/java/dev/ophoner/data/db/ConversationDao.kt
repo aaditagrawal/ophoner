@@ -5,11 +5,22 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import androidx.room.Transaction
+import dev.ophoner.data.entity.MessageEntity
 import dev.ophoner.data.entity.ConversationEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ConversationDao {
+    @Insert
+    suspend fun insertBranchMessages(messages: List<MessageEntity>)
+
+    @Transaction
+    suspend fun insertBranch(conversation: ConversationEntity, messages: List<MessageEntity>) {
+        insert(conversation)
+        insertBranchMessages(messages)
+    }
+
     @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
     fun observeAll(): Flow<List<ConversationEntity>>
 

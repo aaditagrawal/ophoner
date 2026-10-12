@@ -17,7 +17,22 @@ data class ProviderConfig(
     val customModelSlugs: List<String> = emptyList(),
     /** Optional plan label shown in settings (e.g. "ChatGPT Plus", "OpenRouter"). */
     val planLabel: String = "",
+    /** Follow the catalog. The previous ChatGPT preset migrates to automatic selection. */
+    val useLatestModel: Boolean = providerType == ProviderType.CODEX_CHATGPT &&
+        (modelId.isBlank() || modelId == "gpt-5.4"),
+    /** Conservative defaults for custom endpoints; may be overridden in provider imports. */
+    val contextWindowTokens: Int = 32_768,
+    val maxOutputTokens: Int = 4_096,
+    val promptCaching: Boolean = true,
+    /** Processing speed for the ChatGPT subscription connection. */
+    val chatGptSpeed: ChatGptSpeed = ChatGptSpeed.STANDARD,
 )
+
+@Serializable
+enum class ChatGptSpeed(val label: String, val serviceTier: String) {
+    STANDARD("Standard", "default"),
+    FAST("Fast", "fast"),
+}
 
 @Serializable
 enum class AuthMode {
@@ -35,6 +50,7 @@ enum class ProviderType {
     OPENAI,
     OPENROUTER,
     GEMINI,
+    OPENCODE_GO,
     /** ChatGPT subscription via Codex device-code + chatgpt.com/backend-api/codex. */
     CODEX_CHATGPT,
     CUSTOM_OPENAI,

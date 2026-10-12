@@ -6,6 +6,8 @@ import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.model.ProviderType
 import dev.ophoner.data.repository.SettingsRepository
 import okhttp3.OkHttpClient
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,52 +17,46 @@ class ProviderCredentialResolver @Inject constructor(
     @Suppress("unused") private val httpClient: OkHttpClient,
     private val openAiDeviceCodeAuth: OpenAiDeviceCodeAuth,
 ) {
+    private val refreshMutex = Mutex()
     suspend fun resolveAccessToken(config: ProviderConfig): String {
-        if (config.authMode == AuthMode.API_KEY) {
-            return config.apiKey
-        }
-
-        val tokens = settingsRepository.getOAuthTokens(config.id)
-        if (tokens == null) {
-            return config.apiKey
-        }
-
-        val useOauth = config.authMode == AuthMode.OAUTH_DEVICE ||
-            config.providerType == ProviderType.CODEX_CHATGPT
-        if (!useOauth) {
-            return config.apiKey.ifBlank { tokens.accessToken }
-        }
-
-        val refreshed = maybeRefresh(config.id, tokens)
-        val access = refreshed.accessToken
-        return if (config.providerType == ProviderType.CODEX_CHATGPT) {
-            access.ifBlank { config.apiKey }
-        } else {
-            config.apiKey.ifBlank { access }
-        }
+        return bearerCredential(config).first
     }
 
     suspend fun bearerCredential(config: ProviderConfig): Pair<String, String?> {
-        val bearer = resolveAccessToken(config)
-        val fromConfig = config.accountId.takeIf { it.isNotBlank() }
-        val fromTokens = settingsRepository.getOAuthTokens(config.id)?.accountId
-            ?.takeIf { it.isNotBlank() }
-        return bearer to (fromConfig ?: fromTokens)
+        if (config.authMode == AuthMode.API_KEY ||
+            (config.authMode != AuthMode.OAUTH_DEVICE && config.providerType != ProviderType.CODEX_CHATGPT)
+        ) {
+            return config.apiKey to config.accountId.takeIf { it.isNotBlank() }
+        }
+        val tokens = maybeRefresh(config.id)
+        return tokens.accessToken to tokens.accountId.takeIf { it.isNotBlank() }
     }
 
-    private suspend fun maybeRefresh(providerId: String, tokens: OAuthTokens): OAuthTokens {
+    private suspend fun maybeRefresh(providerId: String): OAuthTokens = refreshMutex.withLock {
+        // Another request may already have rotated the refresh token while we waited.
+        val tokens = settingsRepository.getOAuthTokens(providerId)
+        check(tokens != null) { "Log in with ChatGPT again in Settings." }
         val refreshSkewMs = 2 * 60 * 1000L
         val now = System.currentTimeMillis()
         val needsRefresh = tokens.accessToken.isBlank() ||
             tokens.expiresAtEpochMs == 0L ||
             tokens.expiresAtEpochMs <= now + refreshSkewMs
 
-        if (!needsRefresh || tokens.refreshToken.isBlank()) {
-            return tokens
+        if (!needsRefresh) {
+            return@withLock tokens
+        }
+        if (tokens.refreshToken.isBlank()) {
+            check(tokens.accessToken.isNotBlank() &&
+                (tokens.expiresAtEpochMs == 0L || tokens.expiresAtEpochMs > now)) {
+                "Your ChatGPT session expired. Log in with ChatGPT again in Settings."
+            }
+            return@withLock tokens
         }
 
         val refreshed = openAiDeviceCodeAuth.refresh(tokens)
-        settingsRepository.saveOAuthTokens(providerId, refreshed)
-        return refreshed
+        check(settingsRepository.replaceOAuthTokens(providerId, tokens, refreshed)) {
+            "ChatGPT login changed. Please try again."
+        }
+        refreshed
     }
 }

@@ -8,14 +8,15 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.ophoner.data.model.AuthMode
+import dev.ophoner.data.model.OAuthTokens
 import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.model.ProviderPresets
 import dev.ophoner.data.model.ProviderType
 import dev.ophoner.data.repository.SettingsRepository
-import dev.ophoner.llm.auth.DeviceLoginSession
 import dev.ophoner.llm.auth.OpenAiDeviceCodeAuth
 import dev.ophoner.llm.auth.OpenRouterAuth
 import dev.ophoner.llm.auth.Pkce
+import dev.ophoner.llm.auth.ProviderCredentialResolver
 import dev.ophoner.llm.models.ModelCatalogService
 import dev.ophoner.tools.sandbox.SandboxedShell
 import dev.ophoner.tools.sandbox.ShizukuStatus
@@ -23,6 +24,9 @@ import dev.ophoner.ui.theme.AccentChoice
 import dev.ophoner.ui.theme.ThemeMode
 import dev.ophoner.ui.theme.UiFont
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +41,9 @@ data class DeviceLoginUi(
     val verificationUrl: String,
     val busy: Boolean = true,
     val error: String? = null,
+    val saving: Boolean = false,
+    val networkStatus: String? = null,
+    val expiresAtEpochMs: Long? = null,
 )
 
 data class SettingsUiState(
@@ -48,14 +55,18 @@ data class SettingsUiState(
     val importExportMessage: String? = null,
     val shizukuStatus: ShizukuStatus = ShizukuStatus.NOT_INSTALLED,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val uiFont: UiFont = UiFont.DM_MONO,
-    val accent: AccentChoice = AccentChoice.ORANGE,
+    val uiFont: UiFont = UiFont.DM_SANS,
+    val accent: AccentChoice = AccentChoice.BLUE,
     val yoloMode: Boolean = false,
     val deviceLogin: DeviceLoginUi? = null,
     val openRouterPkcePending: Boolean = false,
     val openRouterAuthUrl: String? = null,
     val modelOptions: List<String> = emptyList(),
+    val modelsLoading: Boolean = false,
+    val modelCatalogMessage: String? = null,
     val authMessage: String? = null,
+    val connectedChatGptIds: Set<String> = emptySet(),
+    val chatGptEmails: Map<String, String> = emptyMap(),
 )
 
 @HiltViewModel
@@ -64,6 +75,7 @@ class SettingsViewModel @Inject constructor(
     private val deviceCodeAuth: OpenAiDeviceCodeAuth,
     private val openRouterAuth: OpenRouterAuth,
     private val modelCatalog: ModelCatalogService,
+    private val credentialResolver: ProviderCredentialResolver,
     private val shell: SandboxedShell,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
@@ -72,8 +84,9 @@ class SettingsViewModel @Inject constructor(
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     private var deviceLoginJob: Job? = null
-    private var pendingDeviceSession: DeviceLoginSession? = null
+    private var deviceLoginDraft: ProviderConfig? = null
     private var openRouterVerifier: String? = null
+    private var modelFetchJob: Job? = null
 
     init {
         refreshShizukuStatus()
@@ -87,7 +100,7 @@ class SettingsViewModel @Inject constructor(
                 Triple(
                     runCatching { ThemeMode.valueOf(themeRaw) }.getOrDefault(ThemeMode.SYSTEM),
                     UiFont.parse(fontRaw),
-                    runCatching { AccentChoice.valueOf(accentRaw) }.getOrDefault(AccentChoice.ORANGE),
+                    runCatching { AccentChoice.valueOf(accentRaw) }.getOrDefault(AccentChoice.BLUE),
                 )
             }
 
@@ -107,6 +120,15 @@ class SettingsViewModel @Inject constructor(
                 val (themeMode, uiFont, accent) = appearancePrefs
                 _uiState.value.copy(
                     providers = providers,
+                    connectedChatGptIds = providers.filter {
+                        it.providerType == ProviderType.CODEX_CHATGPT &&
+                            settingsRepository.getOAuthTokens(it.id)?.accessToken?.isNotBlank() == true
+                    }.map { it.id }.toSet(),
+                    chatGptEmails = providers.filter { it.providerType == ProviderType.CODEX_CHATGPT }
+                        .mapNotNull { provider ->
+                            settingsRepository.getOAuthTokens(provider.id)?.let(deviceCodeAuth::accountEmail)
+                                ?.let { provider.id to it }
+                        }.toMap(),
                     activeProviderId = activeId,
                     workingDirUri = dirUri,
                     workingDirDisplay = dirUri?.let { uri ->
@@ -121,6 +143,8 @@ class SettingsViewModel @Inject constructor(
             }.collect { state -> _uiState.value = state }
         }
     }
+
+    fun chatGptTokens(providerId: String): OAuthTokens? = settingsRepository.getOAuthTokens(providerId)
 
     fun addProvider(config: ProviderConfig) {
         viewModelScope.launch {
@@ -249,23 +273,52 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun seedModelOptions(config: ProviderConfig) {
-        val presets = ProviderPresets.forType(config.providerType)?.suggestedModels.orEmpty()
-        val merged = modelCatalog.mergeModelOptions(emptyList(), config, presets)
-        _uiState.update { it.copy(modelOptions = merged) }
+        modelFetchJob?.cancel()
+        _uiState.update {
+            it.copy(
+                modelOptions = modelCatalog.mergeModelOptions(emptyList(), config),
+                modelsLoading = false,
+                modelCatalogMessage = null,
+            )
+        }
+        val canDiscover = ModelCatalogService.modelsDevProviderId(config) != null ||
+            config.apiKey.isNotBlank() ||
+            config.id in _uiState.value.connectedChatGptIds
+        if (config.baseUrl.isNotBlank() && canDiscover) refreshModelsForDraft(config)
     }
 
     fun refreshModelsForDraft(config: ProviderConfig) {
-        viewModelScope.launch {
-            val presets = ProviderPresets.forType(config.providerType)?.suggestedModels.orEmpty()
-            val fetchConfig = config.withFetchCredentials()
-            val remote = modelCatalog.fetchModels(fetchConfig).getOrElse { error ->
-                _uiState.update {
-                    it.copy(authMessage = "Model fetch failed: ${error.message ?: "unknown error"}")
+        modelFetchJob?.cancel()
+        modelFetchJob = viewModelScope.launch {
+            _uiState.update { it.copy(modelsLoading = true, modelCatalogMessage = null) }
+            try {
+                val cached = modelCatalog.cachedModels(config)
+                ensureActive()
+                if (cached.isNotEmpty()) {
+                    _uiState.update {
+                        it.copy(modelOptions = modelCatalog.mergeModelOptions(cached, config))
+                    }
                 }
-                emptyList()
+                val remote = modelCatalog.fetchModels(config.withFetchCredentials()).getOrThrow()
+                ensureActive()
+                _uiState.update {
+                    it.copy(
+                        modelOptions = modelCatalog.mergeModelOptions(remote.ids, config),
+                        modelsLoading = false,
+                        modelCatalogMessage = remote.warning,
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
+                ensureActive()
+                _uiState.update {
+                    it.copy(
+                        modelsLoading = false,
+                        modelCatalogMessage = "Could not refresh models: ${error.message ?: "Connection failed"}. You can still enter a model ID.",
+                    )
+                }
             }
-            val merged = modelCatalog.mergeModelOptions(remote, config, presets)
-            _uiState.update { it.copy(modelOptions = merged) }
         }
     }
 
@@ -280,32 +333,53 @@ class SettingsViewModel @Inject constructor(
                 )
             }
             settingsRepository.saveProviders(updated)
-            updated.find { it.id == providerId }?.let { seedModelOptions(it) }
         }
     }
 
+    fun loginWithChatGpt() {
+        val existing = _uiState.value.providers.firstOrNull { it.providerType == ProviderType.CODEX_CHATGPT }
+        val plan = requireNotNull(ProviderPresets.forType(ProviderType.CODEX_CHATGPT))
+        beginCodexDeviceLogin(existing ?: ProviderConfig(
+            id = UUID.randomUUID().toString(),
+            displayName = plan.defaultDisplayName,
+            baseUrl = plan.defaultBaseUrl,
+            modelId = plan.defaultModelId,
+            providerType = plan.providerType,
+            authMode = plan.authMode,
+            planLabel = plan.planLabel,
+        ))
+    }
+
+    fun retryDeviceLogin() {
+        deviceLoginDraft?.let(::beginCodexDeviceLogin)
+    }
+
+    fun signOutChatGpt(id: String) {
+        cancelDeviceLogin()
+        deleteProvider(id)
+    }
+
     fun beginCodexDeviceLogin(draft: ProviderConfig) {
-        deviceLoginJob?.cancel()
+        if (deviceLoginJob?.isActive == true) return
+        deviceLoginDraft = draft
+        _uiState.update {
+            it.copy(deviceLogin = DeviceLoginUi(userCode = "", verificationUrl = ""), authMessage = null)
+        }
         deviceLoginJob = viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    deviceLogin = DeviceLoginUi(userCode = "…", verificationUrl = "", busy = true),
-                    authMessage = null,
-                )
-            }
             try {
-                val session = deviceCodeAuth.startDeviceLogin()
-                pendingDeviceSession = session
+                val session = deviceCodeAuth.startDeviceLogin(::updateLoginNetworkStatus)
                 _uiState.update {
                     it.copy(
                         deviceLogin = DeviceLoginUi(
                             userCode = session.userCode,
                             verificationUrl = session.verificationUrl,
                             busy = true,
+                            expiresAtEpochMs = session.expiresAtEpochMs,
                         ),
                     )
                 }
-                val tokens = deviceCodeAuth.awaitDeviceLogin(session)
+                val tokens = deviceCodeAuth.awaitDeviceLogin(session, ::updateLoginNetworkStatus)
+                ensureActive()
                 val providerId = draft.id.ifBlank { UUID.randomUUID().toString() }
                 val plan = ProviderPresets.forType(ProviderType.CODEX_CHATGPT)
                 val config = draft.copy(
@@ -317,20 +391,30 @@ class SettingsViewModel @Inject constructor(
                     baseUrl = draft.baseUrl.ifBlank {
                         plan?.defaultBaseUrl ?: "https://chatgpt.com/backend-api/codex"
                     },
-                    modelId = draft.modelId.ifBlank { plan?.defaultModelId ?: "gpt-5.4" },
+                    modelId = draft.modelId,
                     providerType = ProviderType.CODEX_CHATGPT,
                     authMode = AuthMode.OAUTH_DEVICE,
                     accountId = tokens.accountId,
                     planLabel = draft.planLabel.ifBlank { plan?.planLabel ?: "ChatGPT" },
                 )
-                upsertProvider(config)
-                settingsRepository.saveOAuthTokens(config.id, tokens)
-                settingsRepository.setActiveProvider(config.id)
-                pendingDeviceSession = null
+                _uiState.update { it.copy(deviceLogin = it.deviceLogin?.copy(saving = true)) }
+                var modelWarning: String? = null
+                val selected = if (config.useLatestModel) {
+                    val catalog = modelCatalog.fetchModels(config.copy(apiKey = tokens.accessToken))
+                        .getOrElse { error ->
+                            ensureActive()
+                            modelWarning = "Choose a model in Settings when your connection is available."
+                            null
+                        }
+                    if (catalog?.ids?.isNotEmpty() == true) config.copy(modelId = catalog.ids.first()) else config
+                } else config
+                // Finish the local commit even if the screen is closed at this point.
+                withContext(NonCancellable) { settingsRepository.connectChatGpt(selected, tokens) }
+                deviceLoginDraft = null
                 _uiState.update {
                     it.copy(
                         deviceLogin = null,
-                        authMessage = "Signed in with ChatGPT",
+                        authMessage = listOfNotNull("Signed in with ChatGPT", modelWarning).joinToString(". "),
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -352,10 +436,17 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun cancelDeviceLogin() {
+        if (_uiState.value.deviceLogin?.saving == true) return
         deviceLoginJob?.cancel()
         deviceLoginJob = null
-        pendingDeviceSession = null
+        deviceLoginDraft = null
         _uiState.update { it.copy(deviceLogin = null) }
+    }
+
+    private fun updateLoginNetworkStatus(message: String?) {
+        _uiState.update { state ->
+            state.copy(deviceLogin = state.deviceLogin?.copy(networkStatus = message))
+        }
     }
 
     /** Generates PKCE, stores verifier, returns authorize URL (also mirrored in state). */
@@ -446,11 +537,10 @@ class SettingsViewModel @Inject constructor(
         settingsRepository.saveProviders(updated)
     }
 
-    private fun ProviderConfig.withFetchCredentials(): ProviderConfig {
+    private suspend fun ProviderConfig.withFetchCredentials(): ProviderConfig {
         if (providerType != ProviderType.CODEX_CHATGPT) return this
-        if (apiKey.isNotBlank()) return this
-        val tokens = settingsRepository.getOAuthTokens(id) ?: return this
-        return copy(apiKey = tokens.accessToken)
+        val (token, account) = credentialResolver.bearerCredential(this)
+        return copy(apiKey = token, accountId = account.orEmpty())
     }
 
     override fun onCleared() {

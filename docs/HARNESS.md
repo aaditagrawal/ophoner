@@ -10,7 +10,7 @@ Ophoner runs its own Kotlin agent loop on Android. Provider adapters handle mode
 - Recovery is transcript-based. Reopening a conversation and continuing supplies those recorded outcomes to the model. Android process death does not automatically restart an active run.
 - Up to four explicitly parallel-safe reads execute together. Results publish as each read completes; their model context order remains the original call order.
 - Screen, app-launch, device-control, notification and shell workflows acquire a shared phone UI lease. The lease remains held across model turns through run completion or cancellation, protecting observation/action/verification from other Ophoner conversations.
-- Individual tool timeouts come from tool policy. Runs have a 20-minute deadline and the existing 25-turn limit, or 40 in YOLO mode. Three identical all-failing tool batches stop as stalled.
+- Individual tool timeouts come from tool policy. Runs have a 20-minute deadline but no model-turn cap in production; explicit turn limits remain available to deterministic tests. Three identical all-failing tool batches, or six consecutive identical successful action results, stop as stalled.
 - Transient model failures receive at most two retries with jitter and `Retry-After` support. Failed partial responses are discarded before retrying. Tool side effects are never retried by this policy.
 - Stop reasons distinguish completion, cancellation, error, context limit, stalled execution and exhausted budget.
 

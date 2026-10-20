@@ -99,7 +99,7 @@ ksp {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    testImplementation("io.mockk:mockk:1.14.6")
+    testImplementation("io.mockk:mockk:1.14.11")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.coroutines.get()}")
 
     // Compose
@@ -122,8 +122,8 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.navigation.compose)
     implementation(libs.datastore.preferences)
-    implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.documentfile:documentfile:1.1.0")
+    implementation("androidx.security:security-crypto:1.1.0")
 
     // Room
     implementation(libs.room.runtime)

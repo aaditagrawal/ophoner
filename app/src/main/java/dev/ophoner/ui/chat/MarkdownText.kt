@@ -1,8 +1,9 @@
 package dev.ophoner.ui.chat
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -42,7 +43,8 @@ fun MarkdownText(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onSurface,
 ) {
-    val blocks = remember(text) { parseMarkdownBlocks(text) }
+    val parser = remember { IncrementalMarkdownParser() }
+    val blocks = remember(text) { parser.parse(text) }
     val palette = chatPalette()
     val mono = monoFamily()
     val inlineStyle = palette.inlineStyle(mono)
@@ -52,12 +54,12 @@ fun MarkdownText(
             when (block) {
                 is MdBlock.Heading -> {
                     val style = when (block.level) {
-                        1 -> MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                        2 -> MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        else -> MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+                        1 -> MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold)
+                        2 -> MaterialTheme.typography.titleLarge
+                        else -> MaterialTheme.typography.titleMedium
                     }
                     Text(
-                        text = parseInlineMarkdown(block.text, inlineStyle),
+                        text = remember(block.text, inlineStyle) { parseInlineMarkdown(block.text, inlineStyle) },
                         style = style,
                         color = color,
                     )
@@ -74,9 +76,10 @@ fun MarkdownText(
                         color = palette.codeText,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(MdCorner)
                             .background(palette.codeBlockBg)
-                            .padding(11.dp)
+                            .border(1.dp, palette.toolCardBorder, MdCorner)
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
                             .horizontalScroll(rememberScrollState()),
                     )
                     Spacer(Modifier.height(4.dp))
@@ -92,26 +95,27 @@ fun MarkdownText(
                         color = palette.mathText,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(MdCorner)
                             .background(palette.mathBg)
-                            .padding(horizontal = 11.dp, vertical = 9.dp)
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
                             .horizontalScroll(rememberScrollState()),
                     )
                     Spacer(Modifier.height(4.dp))
                 }
                 is MdBlock.Table -> {
                     MdTable(block.headers, block.rows, color)
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(8.dp))
                 }
                 is MdBlock.Divider -> {
                     HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 6.dp),
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        thickness = 0.5.dp,
+                        color = palette.toolCardBorder,
                     )
                 }
                 is MdBlock.Paragraph -> {
                     Text(
-                        text = parseInlineMarkdown(block.text, inlineStyle),
+                        text = remember(block.text, inlineStyle) { parseInlineMarkdown(block.text, inlineStyle) },
                         style = MaterialTheme.typography.bodyMedium,
                         color = color,
                     )
@@ -122,6 +126,8 @@ fun MarkdownText(
     }
 }
 
+private val MdCorner = RoundedCornerShape(14.dp)
+
 @Composable
 private fun MdTable(
     headers: List<String>,
@@ -131,20 +137,29 @@ private fun MdTable(
     val palette = chatPalette()
     val mono = monoFamily()
     val inlineStyle = palette.inlineStyle(mono)
-    val borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-    val columnWidths = remember(headers, rows) { tableColumnWidths(headers, rows) }
+    val borderColor = palette.toolCardBorder
+    val naturalWidths = remember(headers, rows) { tableColumnWidths(headers, rows) }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(palette.tableHeaderBg),
+            .clip(MdCorner)
+            .border(1.dp, borderColor, MdCorner),
     ) {
+        // Row padding is 8 dp per side; stretch columns proportionally to fill the card.
+        val available = maxWidth - 16.dp
+        val natural = naturalWidths.fold(0.dp) { acc, w -> acc + w }
+        val columnWidths = if (natural > 0.dp && natural < available) {
+            naturalWidths.map { it * (available / natural) }
+        } else {
+            naturalWidths
+        }
         Column(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
         ) {
             Row(
                 modifier = Modifier
+                    .background(palette.tableHeaderBg)
                     .drawBehind {
                         drawLine(borderColor, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
                     }
@@ -152,7 +167,7 @@ private fun MdTable(
             ) {
                 for ((colIndex, header) in normalizedTableRow(headers, columnWidths.size).withIndex()) {
                     Text(
-                        text = parseInlineMarkdown(header, inlineStyle),
+                        text = remember(header, inlineStyle) { parseInlineMarkdown(header, inlineStyle) },
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = color,
                         modifier = Modifier
@@ -173,7 +188,7 @@ private fun MdTable(
                 ) {
                     for ((colIndex, cell) in normalizedTableRow(row, columnWidths.size).withIndex()) {
                         Text(
-                            text = parseInlineMarkdown(cell, inlineStyle),
+                            text = remember(cell, inlineStyle) { parseInlineMarkdown(cell, inlineStyle) },
                             style = MaterialTheme.typography.labelMedium,
                             color = color.copy(alpha = 0.85f),
                             modifier = Modifier
@@ -193,15 +208,12 @@ private fun tableColumnWidths(
 ): List<Dp> {
     val columnCount = maxOf(headers.size, rows.maxOfOrNull { it.size } ?: 0)
     return List(columnCount) { colIndex ->
-        val lengths = buildList {
+        // Longest cell (capped) so short values like `Download` never wrap mid-word.
+        val longest = buildList {
             add(headers.getOrNull(colIndex).orEmpty().tableCellLength())
             rows.forEach { row -> add(row.getOrNull(colIndex).orEmpty().tableCellLength()) }
-        }.sorted()
-
-        val medianLength = lengths[lengths.lastIndex / 2]
-        val headerLength = headers.getOrNull(colIndex).orEmpty().tableCellLength()
-        val targetChars = maxOf(medianLength, headerLength)
-            .coerceIn(MinTableColumnChars, MaxTableColumnChars)
+        }.max()
+        val targetChars = longest.coerceIn(MinTableColumnChars, MaxTableColumnChars)
 
         (targetChars * TableColumnCharWidthDp + TableCellHorizontalPaddingDp).dp
     }
@@ -213,7 +225,7 @@ private fun normalizedTableRow(row: List<String>, columnCount: Int): List<String
 
 private fun String.tableCellLength(): Int {
     return trim()
-        .replace(Regex("\\s+"), " ")
+        .replace(WhitespacePattern, " ")
         .length
 }
 
@@ -222,7 +234,7 @@ private const val MaxTableColumnChars = 28
 private const val TableColumnCharWidthDp = 7
 private const val TableCellHorizontalPaddingDp = 16
 
-private sealed interface MdBlock {
+internal sealed interface MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock
     data class CodeBlock(val lang: String, val code: String) : MdBlock
     data class MathBlock(val math: String) : MdBlock
@@ -231,7 +243,7 @@ private sealed interface MdBlock {
     data class Paragraph(val text: String) : MdBlock
 }
 
-private fun parseMarkdownBlocks(text: String): List<MdBlock> {
+internal fun parseMarkdownBlocks(text: String): List<MdBlock> {
     val blocks = mutableListOf<MdBlock>()
     val lines = text.lines()
     var i = 0
@@ -259,13 +271,13 @@ private fun parseMarkdownBlocks(text: String): List<MdBlock> {
             continue
         }
 
-        if (line.trim().matches(Regex("^-{3,}$|^\\*{3,}$|^_{3,}$"))) {
+        if (line.trim().matches(DividerPattern)) {
             blocks.add(MdBlock.Divider)
             i++
             continue
         }
 
-        val headingMatch = Regex("^(#{1,6})\\s+(.+)$").find(line.trim())
+        val headingMatch = HeadingPattern.find(line.trim())
         if (headingMatch != null) {
             val level = headingMatch.groupValues[1].length
             val content = headingMatch.groupValues[2]
@@ -284,7 +296,7 @@ private fun parseMarkdownBlocks(text: String): List<MdBlock> {
                 val parsedRows = tableLines.map { row ->
                     row.trim('|').split("|").map { it.trim() }
                 }
-                val hasSeparator = parsedRows.size >= 2 && parsedRows[1].all { it.matches(Regex("^[:\\-]+$")) }
+                val hasSeparator = parsedRows.size >= 2 && parsedRows[1].all { it.matches(TableSeparatorPattern) }
                 if (hasSeparator) {
                     val headers = parsedRows[0]
                     val dataRows = parsedRows.drop(2)
@@ -309,8 +321,8 @@ private fun parseMarkdownBlocks(text: String): List<MdBlock> {
             if (l.isBlank() ||
                 l.trimStart().startsWith("```") ||
                 isDisplayMathStart(l) ||
-                l.trim().matches(Regex("^-{3,}$|^\\*{3,}$|^_{3,}$")) ||
-                Regex("^#{1,6}\\s+").containsMatchIn(l.trim()) ||
+                l.trim().matches(DividerPattern) ||
+                HeadingPrefixPattern.containsMatchIn(l.trim()) ||
                 (l.trim().startsWith("|") && l.trim().endsWith("|"))
             ) break
             paraLines.add(l)
@@ -324,7 +336,7 @@ private fun parseMarkdownBlocks(text: String): List<MdBlock> {
     return blocks
 }
 
-private data class InlineStyle(
+internal data class InlineStyle(
     val monoFamily: FontFamily,
     val codeBg: Color,
     val codeText: Color,
@@ -341,17 +353,17 @@ private fun ChatPalette.inlineStyle(monoFamily: FontFamily): InlineStyle =
         mathText = mathText,
     )
 
-private fun parseInlineMarkdown(
+internal fun parseInlineMarkdown(
     text: String,
     style: InlineStyle,
 ): AnnotatedString {
     return buildAnnotatedString {
         var remaining = text
         while (remaining.isNotEmpty()) {
-            val boldItalic = Regex("\\*\\*\\*(.+?)\\*\\*\\*").find(remaining)
-            val bold = Regex("\\*\\*(.+?)\\*\\*").find(remaining)
-            val italic = Regex("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)").find(remaining)
-            val code = Regex("`([^`]+)`").find(remaining)
+            val boldItalic = BoldItalicPattern.find(remaining)
+            val bold = BoldPattern.find(remaining)
+            val italic = ItalicPattern.find(remaining)
+            val code = CodePattern.find(remaining)
             val inlineMath = findInlineMath(remaining)
 
             val matches = listOfNotNull(
@@ -551,3 +563,14 @@ private fun isEscaped(text: String, index: Int): Boolean {
     }
     return slashCount % 2 == 1
 }
+
+// Shared compiled patterns; parsing streamed text must not recompile them.
+private val WhitespacePattern = Regex("\\s+")
+private val DividerPattern = Regex("^-{3,}$|^\\*{3,}$|^_{3,}$")
+private val HeadingPattern = Regex("^(#{1,6})\\s+(.+)$")
+private val TableSeparatorPattern = Regex("^[:\\-]+$")
+private val HeadingPrefixPattern = Regex("^#{1,6}\\s+")
+private val BoldItalicPattern = Regex("\\*\\*\\*(.+?)\\*\\*\\*")
+private val BoldPattern = Regex("\\*\\*(.+?)\\*\\*")
+private val ItalicPattern = Regex("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)")
+private val CodePattern = Regex("`([^`]+)`")

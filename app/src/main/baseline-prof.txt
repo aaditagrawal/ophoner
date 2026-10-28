@@ -1,0 +1,6 @@
+# Baseline profile for Ophoner's own code. Compose, Material 3 and Haze ship their own
+# profiles; this adds the app so screens, navigation and the agent loop are compiled
+# ahead of time on install instead of running interpreted until idle dexopt.
+# The app is small enough that covering all of it is cheaper than curating rules.
+HSPLdev/ophoner/**->**(**)**
+Ldev/ophoner/**;

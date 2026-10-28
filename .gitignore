@@ -47,3 +47,6 @@ Thumbs.db
 # app/schemas/
 .tmp-screens/
 .antigravitycli/
+
+# Agent context / scratch
+.agents/

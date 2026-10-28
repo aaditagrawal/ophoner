@@ -37,6 +37,16 @@ android {
     }
 
     buildTypes {
+        create("benchmark") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".benchmark"
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            // Preserve method names for device-generated baseline profiles.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            matchingFallbacks += "release"
+        }
         debug {
             isDebuggable = true
         }
@@ -60,6 +70,7 @@ android {
     }
 
     buildFeatures {
+        aidl = true
         compose = true
         buildConfig = true
     }
@@ -88,6 +99,9 @@ ksp {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.coroutines.get()}")
+
     // Compose
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
@@ -96,17 +110,20 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
     implementation(libs.graphics.shapes)
+    implementation(libs.haze)
+    implementation(libs.haze.blur)
     debugImplementation(libs.compose.ui.tooling)
 
     // AndroidX
     implementation(libs.core.ktx)
+    implementation("androidx.browser:browser:1.10.0")
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.navigation.compose)
     implementation(libs.datastore.preferences)
-    implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.documentfile:documentfile:1.1.0")
+    implementation("androidx.security:security-crypto:1.1.0")
 
     // Room
     implementation(libs.room.runtime)

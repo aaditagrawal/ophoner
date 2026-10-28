@@ -30,10 +30,10 @@ val DmMono = FontFamily(
     Font(R.font.dm_mono_medium, FontWeight.Bold),
 )
 
-/** User-selectable UI font. Mono is the brand default; code blocks are always mono. */
+/** User-selectable UI font. DM Sans is the default; code blocks are always mono. */
 enum class UiFont(val displayName: String) {
-    DM_MONO("DM Mono"),
     DM_SANS("DM Sans"),
+    DM_MONO("DM Mono"),
     SYSTEM("System");
 
     fun toFontFamily(): FontFamily = when (this) {
@@ -49,7 +49,7 @@ enum class UiFont(val displayName: String) {
         fun parse(raw: String): UiFont = when (raw) {
             "GEIST_MONO" -> DM_MONO
             "GEIST_SANS" -> DM_SANS
-            else -> runCatching { valueOf(raw) }.getOrDefault(DM_MONO)
+            else -> runCatching { valueOf(raw) }.getOrDefault(DM_SANS)
         }
     }
 }
@@ -62,8 +62,9 @@ enum class UiFont(val displayName: String) {
  *    so text sits flush in its container instead of floating.
  *  - `LineHeightStyle(alignment = Center, trim = None)` keeps Compose's measured
  *    line box intact (Trim.Both was too aggressive with DM metrics).
- *  - Mono fonts get near-zero tracking — proportional label tracking makes mono
- *    read as loose; instrument-panel UI wants tight monospace.
+ *  - A small regular / medium / semibold hierarchy (no bold): semibold headings
+ *    with tight negative tracking, regular body text, medium labels.
+ *  - Mono fonts get near-zero tracking — positive tracking reads loose in mono.
  */
 fun ophoneTypography(uiFamily: FontFamily, isMono: Boolean): Typography {
     val platform = PlatformTextStyle(includeFontPadding = false)
@@ -88,21 +89,21 @@ fun ophoneTypography(uiFamily: FontFamily, isMono: Boolean): Typography {
         lineHeightStyle = lineHeight,
     )
     return Typography(
-        displayLarge = s(FontWeight.Bold, 32, 40, -0.4),
-        displayMedium = s(FontWeight.Bold, 28, 36, -0.3),
-        displaySmall = s(FontWeight.SemiBold, 24, 32, -0.2),
-        headlineLarge = s(FontWeight.SemiBold, 22, 28, -0.2),
-        headlineMedium = s(FontWeight.SemiBold, 20, 26, -0.1),
-        headlineSmall = s(FontWeight.SemiBold, 18, 24, -0.1),
-        titleLarge = s(FontWeight.SemiBold, 17, 22, -0.1),
-        titleMedium = s(FontWeight.SemiBold, 16, 22),
-        titleSmall = s(FontWeight.Medium, 14, 20),
-        bodyLarge = s(FontWeight.Normal, 16, 22),
-        bodyMedium = s(FontWeight.Normal, 15, 20),
+        displayLarge = s(FontWeight.SemiBold, 34, 40, -1.5),
+        displayMedium = s(FontWeight.SemiBold, 30, 36, -1.1),
+        displaySmall = s(FontWeight.SemiBold, 26, 32, -0.8),
+        headlineLarge = s(FontWeight.SemiBold, 23, 28, -0.7),
+        headlineMedium = s(FontWeight.SemiBold, 21, 27, -0.5),
+        headlineSmall = s(FontWeight.Medium, 19, 25, -0.3),
+        titleLarge = s(FontWeight.SemiBold, 17, 22, -0.3),
+        titleMedium = s(FontWeight.SemiBold, 16, 22, -0.3),
+        titleSmall = s(FontWeight.Medium, 15, 20),
+        bodyLarge = s(FontWeight.Normal, 16, 24),
+        bodyMedium = s(FontWeight.Normal, 15, 22),
         bodySmall = s(FontWeight.Normal, 13, 18),
-        labelLarge = s(FontWeight.Medium, 14, 20, 0.1),
-        labelMedium = s(FontWeight.Medium, 12, 16, 0.2),
-        labelSmall = s(FontWeight.Medium, 11, 14, 0.3),
+        labelLarge = s(FontWeight.Medium, 14, 20),
+        labelMedium = s(FontWeight.Normal, 12, 16),
+        labelSmall = s(FontWeight.Normal, 11, 14),
     )
 }
 

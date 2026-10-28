@@ -17,6 +17,10 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
+import dev.ophoner.device.DeviceAccess
+import dev.ophoner.device.DeviceCapability
+import dev.ophoner.tools.sandbox.SandboxedShell
+import kotlinx.coroutines.CancellationException
 import dev.ophoner.tools.Tool
 import dev.ophoner.tools.ToolExecutor
 import dev.ophoner.tools.ToolResult
@@ -31,6 +35,8 @@ import javax.inject.Inject
 
 class DeviceControlTool @Inject constructor(
     private val context: Context,
+    private val shell: SandboxedShell,
+    private val access: DeviceAccess,
 ) : ToolExecutor {
 
     override val definition = Tool(
@@ -110,11 +116,12 @@ class DeviceControlTool @Inject constructor(
                 "set_clipboard" -> setClipboard(value)
                 "vibrate" -> vibrate(value)
                 "get_device_info" -> getDeviceInfo()
-                "toggle_flashlight" -> toggleFlashlight(value)
+                "toggle_flashlight" -> { access.requireEnabled(DeviceCapability.CAMERA); toggleFlashlight(value) }
                 "get_network_info" -> getNetworkInfo()
                 else -> return ToolResult(toolUseId, "Unknown action: $action", isError = true)
             }
             ToolResult(toolUseId, output)
+        } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
             ToolResult(toolUseId, "Error performing $action: ${e.message}", isError = true)
         }
@@ -133,6 +140,7 @@ class DeviceControlTool @Inject constructor(
     }
 
     private fun setBrightness(value: String?): String {
+        access.requireEnabled(DeviceCapability.SETTINGS)
         if (value == null) return "Missing 'value' parameter. Provide brightness 0-255."
         val brightness = value.toIntOrNull()
             ?: return "Invalid brightness value: '$value'. Must be an integer 0-255."
@@ -177,9 +185,16 @@ class DeviceControlTool @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    private fun toggleWifi(value: String?): String {
+    private suspend fun toggleWifi(value: String?): String {
         if (value == null) return "Missing 'value' parameter. Use 'on' or 'off'."
         if (value !in listOf("on", "off")) return "Invalid value: '$value'. Use 'on' or 'off'."
+
+        if (shell.isShizukuAvailable()) {
+            val result = shell.executePrivileged("svc wifi ${if (value == "on") "enable" else "disable"}")
+            check(result.exitCode == 0) { "Wi-Fi command failed: ${result.stderr}" }
+            val status = shell.executePrivileged("cmd wifi status")
+            return "Wi-Fi request completed. ${status.stdout}"
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return "Direct WiFi toggling is not supported on Android 10+. " +
@@ -193,9 +208,16 @@ class DeviceControlTool @Inject constructor(
     }
 
     @SuppressLint("MissingPermission")
-    private fun toggleBluetooth(value: String?): String {
+    private suspend fun toggleBluetooth(value: String?): String {
         if (value == null) return "Missing 'value' parameter. Use 'on' or 'off'."
         if (value !in listOf("on", "off")) return "Invalid value: '$value'. Use 'on' or 'off'."
+
+        access.requireEnabled(DeviceCapability.BLUETOOTH)
+        if (shell.isShizukuAvailable()) {
+            val result = shell.executePrivileged("cmd bluetooth_manager ${if (value == "on") "enable" else "disable"}")
+            check(result.exitCode == 0) { "Bluetooth command failed: ${result.stderr}" }
+            return "Bluetooth request submitted. ${result.stdout}"
+        }
 
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             ?: return "Bluetooth service not available on this device."

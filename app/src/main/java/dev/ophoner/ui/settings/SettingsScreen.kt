@@ -1,66 +1,59 @@
 package dev.ophoner.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Contrast
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.FileUpload
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.TextFields
-import androidx.compose.material.icons.outlined.Tonality
-import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,45 +62,70 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.chrisbanes.haze.rememberHazeState
 import dev.ophoner.data.model.AuthMode
+import dev.ophoner.data.model.OAuthTokens
 import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.model.ProviderPresets
 import dev.ophoner.data.model.ProviderType
 import dev.ophoner.tools.sandbox.ShizukuStatus
+import dev.ophoner.ui.components.CardCorner
+import dev.ophoner.ui.components.GlassIconButton
 import dev.ophoner.ui.components.GroupedSection
+import dev.ophoner.ui.components.LocalGlassState
+import dev.ophoner.ui.components.Lucide
+import dev.ophoner.ui.components.LucideIcon
+import dev.ophoner.ui.components.PrimaryButton
+import dev.ophoner.ui.components.RowDivider
+import dev.ophoner.ui.components.ScreenTitle
+import dev.ophoner.ui.components.SecondaryButton
+import dev.ophoner.ui.components.SectionLabel
+import dev.ophoner.ui.components.StatusBarScrim
+import dev.ophoner.ui.components.glassSource
+import dev.ophoner.ui.components.pressFade
 import dev.ophoner.ui.theme.AccentChoice
 import dev.ophoner.ui.theme.ThemeMode
 import dev.ophoner.ui.theme.UiFont
 import dev.ophoner.ui.theme.isDarkTheme
+import dev.ophoner.ui.theme.monoFamily
+import dev.ophoner.ui.theme.tokens
 import java.util.UUID
+import kotlinx.coroutines.delay
 
-private val InstrumentCorner = RoundedCornerShape(10.dp)
-private val InstrumentInnerCorner = RoundedCornerShape(7.dp)
-private val Hairline = 0.5.dp
+/** Row icon column (16 padding + 20 icon + 16 gap) — dividers start here. */
+private val RowTextIndent = 52.dp
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onOpenCapabilities: () -> Unit = {},
+    onOpenDeviceSetup: () -> Unit = {},
+    onOpenShizuku: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showPlanPicker by rememberSaveable { mutableStateOf(false) }
     var draftPlanId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingProviderId by rememberSaveable { mutableStateOf<String?>(null) }
+    var signOutProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val glass = rememberHazeState()
+    val t = tokens()
 
     var systemPromptDraft by rememberSaveable { mutableStateOf<String?>(null) }
     val systemPromptValue = systemPromptDraft ?: uiState.systemPrompt
@@ -156,164 +174,222 @@ fun SettingsScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        "Settings",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { padding ->
-        Column(
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
+    CompositionLocalProvider(LocalGlassState provides glass) {
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .consumeWindowInsets(padding)
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+                .background(t.background),
         ) {
-            Column(modifier = Modifier.padding(top = 4.dp)) {
-                SectionHeader("Appearance")
-                GroupedSection {
-                    ThemeRow(
-                        selected = uiState.themeMode,
-                        onSelect = viewModel::setThemeMode,
-                    )
-                    Separator()
-                    AccentRow(
-                        selected = uiState.accent,
-                        onSelect = viewModel::setAccent,
-                    )
-                    Separator()
-                    FontRow(
-                        selected = uiState.uiFont,
-                        onSelect = viewModel::setUiFont,
-                    )
-                }
-            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .glassSource(glass)
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 18.dp, end = 18.dp, top = statusBarTop + 76.dp, bottom = navBarBottom + 40.dp),
+                verticalArrangement = Arrangement.spacedBy(36.dp),
+            ) {
+                ScreenTitle(
+                    title = "Settings",
+                    subtitle = "Providers, appearance, and how far the agent can reach.",
+                )
 
-            Column {
-                SectionHeader("System Prompt")
-                GroupedSection {
-                    SystemPromptEditor(
-                        value = systemPromptValue,
-                        dirty = systemPromptDirty,
-                        onValueChange = { systemPromptDraft = it },
-                        onSave = { viewModel.setSystemPrompt(systemPromptValue) },
-                        onRevert = { systemPromptDraft = null },
-                    )
-                }
-                HelperText("Sent with every chat. Folders append their own scope instructions.")
-            }
-
-            Column {
-                SectionHeader("LLM Providers")
-                if (uiState.providers.isNotEmpty()) {
-                    GroupedSection {
-                        uiState.providers.forEachIndexed { index, provider ->
-                            ProviderRow(
-                                config = provider,
-                                isActive = provider.id == uiState.activeProviderId,
-                                onSetActive = { viewModel.setActiveProvider(provider.id) },
-                                onEdit = { editingProviderId = provider.id },
-                                onDelete = { viewModel.deleteProvider(provider.id) },
-                            )
-                            if (index < uiState.providers.lastIndex) Separator()
+                SettingsSection("Providers") {
+                    val chatGpt = uiState.providers.firstOrNull {
+                        it.providerType == ProviderType.CODEX_CHATGPT
+                    }
+                    val chatGptConnected = chatGpt?.id in uiState.connectedChatGptIds
+                    if (chatGptConnected && chatGpt != null) {
+                        GroupedSection {
+                            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("ChatGPT", color = t.ink, style = MaterialTheme.typography.titleMedium)
+                                        Text("Signed in", color = t.success, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    TextButton(onClick = { editingProviderId = chatGpt.id }) { Text("Manage") }
+                                }
+                                uiState.chatGptEmails[chatGpt.id]?.let { email ->
+                                    Text(email, color = t.ink, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Text(
+                                    chatGpt.modelId.ifBlank { "Choosing newest model…" } + if (chatGpt.useLatestModel) " · Auto" else "",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = monoFamily()),
+                                    color = t.secondary,
+                                )
+                                if (chatGpt.id != uiState.activeProviderId) {
+                                    TextButton(onClick = { viewModel.setActiveProvider(chatGpt.id) }) { Text("Use for chat") }
+                                }
+                            }
                         }
+                    } else {
+                        PrimaryButton(
+                            text = "Log in with ChatGPT",
+                            icon = Lucide.MessageSquare,
+                            onClick = viewModel::loginWithChatGpt,
+                            enabled = uiState.deviceLogin == null,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        HelperText(
+                            "Use your ChatGPT account for Codex models. No API key needed.",
+                        )
                     }
-                    Spacer(Modifier.height(8.dp))
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    InstrumentButton(
-                        text = "Add",
-                        icon = Icons.Outlined.Add,
+                    Spacer(Modifier.height(16.dp))
+                    val otherProviders = uiState.providers.filterNot { chatGptConnected && it.id == chatGpt?.id }
+                    if (otherProviders.isNotEmpty()) {
+                        GroupedSection {
+                            otherProviders.forEachIndexed { index, provider ->
+                                ProviderRow(
+                                    config = provider,
+                                    isActive = provider.id == uiState.activeProviderId,
+                                    onSetActive = { viewModel.setActiveProvider(provider.id) },
+                                    onEdit = { editingProviderId = provider.id },
+                                    onDelete = { viewModel.deleteProvider(provider.id) },
+                                )
+                                if (index < otherProviders.lastIndex) RowDivider(startIndent = RowTextIndent + 2.dp)
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    SecondaryButton(
+                        text = "Add provider",
+                        icon = Lucide.Plus,
                         onClick = { showPlanPicker = true },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    InstrumentButton(
-                        text = "Import",
-                        icon = Icons.Outlined.FileDownload,
-                        onClick = { importLauncher.launch(arrayOf("application/json")) },
-                        modifier = Modifier.weight(1f),
-                    )
-                    InstrumentButton(
-                        text = "Export",
-                        icon = Icons.Outlined.FileUpload,
-                        onClick = { exportLauncher.launch("ophoner_providers.json") },
-                        modifier = Modifier.weight(1f),
-                        enabled = uiState.providers.isNotEmpty(),
-                    )
-                }
-                HelperText("Backup or move your providers between devices.")
-            }
-
-            Column {
-                SectionHeader("File Access")
-                GroupedSection {
-                    ChevronRow(
-                        leading = Icons.Outlined.FolderOpen,
-                        title = "Working Directory",
-                        subtitle = uiState.workingDirDisplay ?: "Tap to select a folder",
-                        onClick = { dirPickerLauncher.launch(null) },
-                    )
-                }
-            }
-
-            Column {
-                SectionHeader("Agent")
-                GroupedSection {
-                    YoloModeRow(
-                        enabled = uiState.yoloMode,
-                        onToggle = viewModel::setYoloMode,
-                    )
-                }
-                HelperText(
-                    "Dangerous: YOLO auto-allows unscoped shell commands, skips confirmation " +
-                        "gates, and raises the agent iteration limit. Hard denylist still applies. " +
-                        "Only enable if you trust the model with broad device access.",
-                )
-            }
-
-            Column {
-                SectionHeader("Shell Privileges")
-                GroupedSection {
-                    ShizukuRow(
-                        status = uiState.shizukuStatus,
-                        onGrant = viewModel::requestShizukuPermission,
-                        onRefresh = viewModel::refreshShizukuStatus,
-                    )
-                }
-                HelperText(
-                    when (uiState.shizukuStatus) {
-                        ShizukuStatus.CONNECTED -> "Shell commands run with ADB-level privileges."
-                        ShizukuStatus.PERMISSION_NEEDED -> "Tap Grant to allow privileged shell access."
-                        ShizukuStatus.NOT_RUNNING -> "Start the Shizuku app for ADB-level shell access."
-                        ShizukuStatus.NOT_INSTALLED -> "Install Shizuku for ADB-level shell access."
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SecondaryButton(
+                            text = "Import",
+                            icon = Lucide.Download,
+                            onClick = { importLauncher.launch(arrayOf("application/json")) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        SecondaryButton(
+                            text = "Export",
+                            icon = Lucide.Upload,
+                            onClick = { exportLauncher.launch("ophoner_providers.json") },
+                            modifier = Modifier.weight(1f),
+                            enabled = uiState.providers.isNotEmpty(),
+                        )
                     }
-                )
+                    HelperText("Back up or move your providers between devices.")
+                }
+
+                SettingsSection("Appearance") {
+                    GroupedSection {
+                        ThemeRow(
+                            selected = uiState.themeMode,
+                            onSelect = viewModel::setThemeMode,
+                        )
+                        RowDivider(startIndent = RowTextIndent)
+                        AccentRow(
+                            selected = uiState.accent,
+                            onSelect = viewModel::setAccent,
+                        )
+                        RowDivider(startIndent = RowTextIndent)
+                        FontRow(
+                            selected = uiState.uiFont,
+                            onSelect = viewModel::setUiFont,
+                        )
+                    }
+                }
+
+                SettingsSection("Personalize") {
+                    PersonalizeSection()
+                }
+
+                SettingsSection("System prompt") {
+                    GroupedSection {
+                        SystemPromptEditor(
+                            value = systemPromptValue,
+                            dirty = systemPromptDirty,
+                            onValueChange = { systemPromptDraft = it },
+                            onSave = { viewModel.setSystemPrompt(systemPromptValue) },
+                            onRevert = { systemPromptDraft = null },
+                        )
+                    }
+                    HelperText("Sent with every chat. Folders append their own scope instructions.")
+                }
+
+                SettingsSection("File access") {
+                    GroupedSection {
+                        ChevronRow(
+                            leading = Lucide.FolderOpen,
+                            title = "Working directory",
+                            subtitle = uiState.workingDirDisplay ?: "Tap to select a folder",
+                            onClick = { dirPickerLauncher.launch(null) },
+                        )
+                    }
+                }
+
+                SettingsSection("Agent") {
+                    GroupedSection {
+                        ChevronRow(leading = Lucide.Smartphone, title = "Set up device access",
+                            subtitle = "Recommended · Enable all with guided setup", onClick = onOpenDeviceSetup)
+                    }
+                    GroupedSection {
+                        ChevronRow(
+                            leading = Lucide.Smartphone,
+                            title = "Device capabilities",
+                            subtitle = "Permissions, app control, and connection tests",
+                            onClick = onOpenCapabilities,
+                        )
+                    }
+                    GroupedSection {
+                        YoloModeRow(
+                            enabled = uiState.yoloMode,
+                            onToggle = viewModel::setYoloMode,
+                        )
+                    }
+                    HelperText(
+                        "Dangerous: YOLO auto-allows unscoped shell commands, skips confirmation " +
+                            "gates. Hard denylist still applies. " +
+                            "Only enable if you trust the model with broad device access.",
+                    )
+                }
+
+                SettingsSection("Shell privileges") {
+                    GroupedSection {
+                        ChevronRow(leading = Lucide.Shield, title = "Set up Shizuku",
+                            subtitle = "Guided connection · No root required", onClick = onOpenShizuku)
+                    }
+                }
             }
 
-            Spacer(Modifier.height(20.dp))
+            StatusBarScrim(modifier = Modifier.align(Alignment.TopCenter))
+
+            GlassIconButton(
+                icon = Lucide.ArrowLeft,
+                contentDescription = "Back",
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+            )
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(bottom = 8.dp),
+            ) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = t.ink,
+                    contentColor = t.inverse,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
         }
     }
 
@@ -336,7 +412,6 @@ fun SettingsScreen(
         ProviderDialog(
             existing = null,
             plan = plan,
-            modelOptions = uiState.modelOptions,
             openRouterPkcePending = uiState.openRouterPkcePending,
             onDismiss = {
                 viewModel.cancelDeviceLogin()
@@ -349,8 +424,6 @@ fun SettingsScreen(
                 draftPlanId = null
                 showPlanPicker = false
             },
-            onSeedModels = viewModel::seedModelOptions,
-            onFetchModels = viewModel::refreshModelsForDraft,
             onOpenUrl = viewModel::openUrl,
             onBeginCodexLogin = viewModel::beginCodexDeviceLogin,
             onBeginOpenRouterLogin = {
@@ -367,8 +440,11 @@ fun SettingsScreen(
             ProviderDialog(
                 existing = existing,
                 plan = ProviderPresets.forType(existing.providerType),
-                modelOptions = uiState.modelOptions,
-                openRouterPkcePending = uiState.openRouterPkcePending,
+                chatGptConnected = existing.id in uiState.connectedChatGptIds,
+                chatGptEmail = uiState.chatGptEmails[existing.id],
+                chatGptTokens = remember(existing.id, uiState.providers) { viewModel.chatGptTokens(existing.id) },
+                onSignOut = { editingProviderId = null; signOutProviderId = existing.id },
+                    openRouterPkcePending = uiState.openRouterPkcePending,
                 onDismiss = {
                     viewModel.cancelDeviceLogin()
                     viewModel.clearOpenRouterPkce()
@@ -378,18 +454,13 @@ fun SettingsScreen(
                     viewModel.updateProvider(config)
                     editingProviderId = null
                 },
-                onSeedModels = viewModel::seedModelOptions,
-                onFetchModels = viewModel::refreshModelsForDraft,
-                onOpenUrl = viewModel::openUrl,
+                                onOpenUrl = viewModel::openUrl,
                 onBeginCodexLogin = viewModel::beginCodexDeviceLogin,
                 onBeginOpenRouterLogin = {
                     val url = viewModel.beginOpenRouterLogin()
                     url?.let(viewModel::openUrl)
                 },
                 onCompleteOpenRouterLogin = viewModel::completeOpenRouterLogin,
-                onAddCustomSlugPersist = { slug ->
-                    viewModel.addCustomModelSlug(existing.id, slug)
-                },
             )
         } else {
             editingProviderId = null
@@ -401,41 +472,85 @@ fun SettingsScreen(
             state = deviceLogin,
             onOpenVerification = { viewModel.openUrl(deviceLogin.verificationUrl) },
             onCancel = viewModel::cancelDeviceLogin,
+            onRetry = viewModel::retryDeviceLogin,
+        )
+    }
+
+    signOutProviderId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { signOutProviderId = null },
+            title = { Text("Sign out of ChatGPT?") },
+            text = { Text("This removes the ChatGPT connection and its saved credentials from this device. Your conversations stay here.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.signOutChatGpt(id)
+                    signOutProviderId = null
+                }) { Text("Sign out") }
+            },
+            dismissButton = {
+                TextButton(onClick = { signOutProviderId = null }) { Text("Cancel") }
+            },
         )
     }
 }
 
 @Composable
-private fun SectionHeader(title: String) {
-    Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelMedium.copy(
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 1.1.sp,
-            fontWeight = FontWeight.Medium,
-        ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-        modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
-    )
+private fun SettingsSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column {
+        SectionLabel(title)
+        content()
+    }
 }
 
 @Composable
 private fun HelperText(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
+        style = MaterialTheme.typography.labelMedium.copy(lineHeight = 18.sp),
+        color = tokens().secondary,
+        modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp),
     )
 }
 
+/** Standard menu row: 20 dp line icon, 16 sp title, optional quiet subtitle. */
 @Composable
-private fun Separator() {
-    HorizontalDivider(
-        modifier = Modifier.padding(start = 48.dp),
-        thickness = Hairline,
-        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-    )
+internal fun RowHeader(
+    @DrawableRes icon: Int,
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    iconTint: Color = tokens().accent,
+    subtitleColor: Color = tokens().secondary,
+    trailing: @Composable () -> Unit = {},
+) {
+    val t = tokens()
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LucideIcon(icon = icon, contentDescription = null, tint = iconTint, size = 20.dp)
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = t.ink,
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = subtitleColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        trailing()
+    }
 }
 
 @Composable
@@ -446,9 +561,10 @@ private fun SystemPromptEditor(
     onSave: () -> Unit,
     onRevert: () -> Unit,
 ) {
+    val t = tokens()
     Column(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         OutlinedTextField(
             value = value,
@@ -457,39 +573,34 @@ private fun SystemPromptEditor(
             minLines = 5,
             maxLines = 12,
             textStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontFamily = FontFamily.Monospace,
+                fontFamily = monoFamily(),
                 fontSize = 13.sp,
-                lineHeight = 18.sp,
+                lineHeight = 19.sp,
             ),
-            shape = InstrumentCorner,
+            shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedBorderColor = t.accent,
+                unfocusedBorderColor = t.line,
+                focusedContainerColor = t.raised,
+                unfocusedContainerColor = t.raised,
             ),
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (dirty) {
                 TextButton(onClick = onRevert) {
-                    Text("Revert", style = MaterialTheme.typography.labelLarge)
+                    Text("Revert", style = MaterialTheme.typography.labelLarge, color = t.secondary)
                 }
-                TextButton(onClick = onSave) {
-                    Text("Save", style = MaterialTheme.typography.labelLarge)
-                }
+                PrimaryButton(text = "Save", onClick = onSave, height = 40.dp)
             } else {
                 Text(
                     "Saved",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 0.6.sp,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = t.secondary,
+                    modifier = Modifier.padding(end = 6.dp, top = 6.dp, bottom = 6.dp),
                 )
             }
         }
@@ -501,41 +612,27 @@ private fun YoloModeRow(
     enabled: Boolean,
     onToggle: (Boolean) -> Unit,
 ) {
-    val warningTint = MaterialTheme.colorScheme.error
-    Row(
+    val t = tokens()
+    RowHeader(
+        icon = Lucide.TriangleAlert,
+        title = "YOLO mode",
+        subtitle = if (enabled) "On: unscoped shell, no confirmations" else "Off: allowlisted shell only",
+        iconTint = if (enabled) t.danger else t.icon,
+        subtitleColor = if (enabled) t.danger else t.secondary,
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onToggle(!enabled) }
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .pressFade(role = Role.Switch, onClick = { onToggle(!enabled) })
+            .padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
     ) {
-        Icon(
-            Icons.Outlined.WarningAmber,
-            contentDescription = null,
-            tint = warningTint,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "YOLO mode",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                if (enabled) "On — unscoped shell + no confirmations"
-                else "Off — allowlisted shell only",
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                color = if (enabled) warningTint else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
         Switch(
             checked = enabled,
             onCheckedChange = onToggle,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.onError,
-                checkedTrackColor = warningTint,
-                checkedBorderColor = warningTint,
+                checkedThumbColor = t.inverse,
+                checkedTrackColor = t.danger,
+                checkedBorderColor = t.danger,
+                uncheckedThumbColor = t.mutedIcon,
+                uncheckedTrackColor = t.panelHigh,
+                uncheckedBorderColor = t.lineStrong,
             ),
         )
     }
@@ -543,46 +640,21 @@ private fun YoloModeRow(
 
 @Composable
 private fun ChevronRow(
-    leading: ImageVector,
+    @DrawableRes leading: Int,
     title: String,
     subtitle: String?,
     onClick: () -> Unit,
 ) {
-    Row(
+    RowHeader(
+        icon = leading,
+        title = title,
+        subtitle = subtitle,
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .heightIn(min = 60.dp)
+            .pressFade(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
-        Icon(
-            leading,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-        }
-        Icon(
-            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-            modifier = Modifier.size(18.dp),
-        )
+        LucideIcon(icon = Lucide.ChevronRight, contentDescription = null, tint = tokens().mutedIcon, size = 18.dp)
     }
 }
 
@@ -591,25 +663,9 @@ private fun ThemeRow(
     selected: ThemeMode,
     onSelect: (ThemeMode) -> Unit,
 ) {
-    Column(
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Outlined.Contrast,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Text(
-                "Theme",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(8.dp))
+    Column(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 12.dp)) {
+        RowHeader(icon = Lucide.Contrast, title = "Theme")
+        Spacer(Modifier.height(12.dp))
         SegmentedControl(
             options = ThemeMode.entries,
             selected = selected,
@@ -624,41 +680,32 @@ private fun AccentRow(
     selected: AccentChoice,
     onSelect: (AccentChoice) -> Unit,
 ) {
+    val t = tokens()
     val dark = isDarkTheme()
-    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Outlined.Tonality,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(14.dp))
+    Column(modifier = Modifier.padding(top = 14.dp, bottom = 12.dp)) {
+        RowHeader(
+            icon = Lucide.Palette,
+            title = "Accent",
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp),
+        ) {
             Text(
-                "Accent",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                selected.displayName.uppercase(),
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 0.8.sp,
-                ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                selected.displayName,
+                style = MaterialTheme.typography.labelLarge,
+                color = t.secondary,
             )
         }
         Spacer(Modifier.height(10.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             for (choice in AccentChoice.entries) {
                 AccentSwatchDot(
                     color = choice.color(dark),
+                    label = choice.displayName,
                     isSelected = choice == selected,
                     onClick = { onSelect(choice) },
                 )
@@ -670,30 +717,32 @@ private fun AccentRow(
 @Composable
 private fun AccentSwatchDot(
     color: Color,
+    label: String,
     isSelected: Boolean,
     onClick: () -> Unit,
 ) {
+    val t = tokens()
     Box(
         modifier = Modifier
-            .size(26.dp)
+            .size(44.dp)
             .clip(CircleShape)
-            .clickable(onClick = onClick),
+            .pressFade(onClickLabel = label, role = Role.RadioButton, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(if (isSelected) 18.dp else 22.dp)
-                .clip(CircleShape)
-                .background(color),
-        )
         if (isSelected) {
             Box(
                 modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .border(Hairline * 3, color, CircleShape),
+                    .size(34.dp)
+                    .border(2.dp, t.ink.copy(alpha = 0.85f), CircleShape),
             )
         }
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(color)
+                .border(1.dp, t.line, CircleShape),
+        )
     }
 }
 
@@ -702,25 +751,9 @@ private fun FontRow(
     selected: UiFont,
     onSelect: (UiFont) -> Unit,
 ) {
-    Column(
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Outlined.TextFields,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Text(
-                "Interface Font",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(8.dp))
+    Column(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 12.dp)) {
+        RowHeader(icon = Lucide.Type, title = "Interface font")
+        Spacer(Modifier.height(12.dp))
         SegmentedControl(
             options = UiFont.entries,
             selected = selected,
@@ -730,110 +763,51 @@ private fun FontRow(
     }
 }
 
+/** Capsule segmented control; the selected segment is a raised pill with a hairline edge. */
 @Composable
-private fun <T : Any> SegmentedControl(
+internal fun <T : Any> SegmentedControl(
     options: List<T>,
     selected: T,
     onSelect: (T) -> Unit,
     label: (T) -> String,
 ) {
-    Box(
+    val t = tokens()
+    val track = RoundedCornerShape(22.dp)
+    val pill = RoundedCornerShape(19.dp)
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(InstrumentCorner)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .border(
-                Hairline,
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                InstrumentCorner,
-            )
-            .padding(2.dp),
+            .clip(track)
+            .background(t.panelHigh)
+            .padding(3.dp),
     ) {
-        Row(modifier = Modifier.fillMaxWidth()) {
-            for (opt in options) {
-                val isSelected = opt == selected
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(InstrumentInnerCorner)
-                        .background(
-                            if (isSelected) MaterialTheme.colorScheme.surface
-                            else Color.Transparent
-                        )
-                        .then(
-                            if (isSelected) {
-                                Modifier.border(
-                                    Hairline,
-                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                                    InstrumentInnerCorner,
-                                )
-                            } else Modifier
-                        )
-                        .clickable { onSelect(opt) }
-                        .padding(vertical = 7.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        label(opt),
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            letterSpacing = 0.2.sp,
-                        ),
-                        color = if (isSelected) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+        for (opt in options) {
+            val isSelected = opt == selected
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 38.dp)
+                    .clip(pill)
+                    .then(
+                        if (isSelected) {
+                            Modifier
+                                .background(t.raised)
+                                .border(1.dp, t.line, pill)
+                        } else {
+                            Modifier
+                        },
                     )
-                }
+                    .pressFade(role = Role.Tab, onClick = { onSelect(opt) }),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label(opt),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isSelected) t.ink else t.secondary,
+                    fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
+                )
             }
         }
-    }
-}
-
-@Composable
-private fun InstrumentButton(
-    text: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-) {
-    val borderAlpha = if (enabled) 0.4f else 0.2f
-    Row(
-        modifier = modifier
-            .clip(InstrumentCorner)
-            .background(
-                if (enabled) MaterialTheme.colorScheme.surfaceContainerLow
-                else MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)
-            )
-            .border(
-                Hairline,
-                MaterialTheme.colorScheme.outline.copy(alpha = borderAlpha),
-                InstrumentCorner,
-            )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 12.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = if (enabled) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-            modifier = Modifier.size(15.dp),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text.uppercase(),
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-                letterSpacing = 0.8.sp,
-            ),
-            color = if (enabled) MaterialTheme.colorScheme.onSurface
-            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-        )
     }
 }
 
@@ -845,66 +819,66 @@ private fun ProviderRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val t = tokens()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onSetActive)
-            .padding(start = 14.dp, end = 4.dp, top = 9.dp, bottom = 9.dp),
+            .heightIn(min = 68.dp)
+            .pressFade(role = Role.RadioButton, onClickLabel = "Use ${config.displayName}", onClick = onSetActive)
+            .padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(20.dp)
+                .size(22.dp)
                 .clip(CircleShape)
                 .then(
-                    if (isActive) Modifier.background(MaterialTheme.colorScheme.primary)
-                    else Modifier.border(
-                        Hairline * 3,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
-                        CircleShape,
-                    )
+                    if (isActive) Modifier.background(t.accent)
+                    else Modifier.border(1.5.dp, t.lineStrong, CircleShape)
                 ),
             contentAlignment = Alignment.Center,
         ) {
             if (isActive) {
-                Icon(
-                    Icons.Outlined.Check,
-                    contentDescription = "Active",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(12.dp),
-                )
+                LucideIcon(icon = Lucide.Check, contentDescription = "Active", tint = t.onAccent, size = 14.dp)
             }
         }
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 config.displayName,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.titleSmall,
+                color = t.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 providerRowSubtitle(config),
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                color = t.secondary,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        IconButton(onClick = onEdit, modifier = Modifier.size(34.dp)) {
-            Icon(
-                Icons.Outlined.Edit,
-                contentDescription = "Edit",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                modifier = Modifier.size(17.dp),
-            )
-        }
-        IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
-            Icon(
-                Icons.Outlined.DeleteOutline,
-                contentDescription = "Delete",
-                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                modifier = Modifier.size(17.dp),
-            )
-        }
+        RowIconButton(icon = Lucide.Pencil, contentDescription = "Edit", tint = t.icon, onClick = onEdit)
+        RowIconButton(icon = Lucide.Trash, contentDescription = "Delete", tint = t.danger, onClick = onDelete)
+    }
+}
+
+@Composable
+private fun RowIconButton(
+    @DrawableRes icon: Int,
+    contentDescription: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .pressFade(onClickLabel = contentDescription, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        LucideIcon(icon = icon, contentDescription = contentDescription, tint = tint, size = 18.dp)
     }
 }
 
@@ -918,56 +892,11 @@ private fun providerRowSubtitle(config: ProviderConfig): String {
         else -> config.providerType.name.replace('_', ' ').lowercase()
             .replaceFirstChar { it.uppercase() }
     }
-    val model = config.modelId.split("/").lastOrNull()?.takeIf { it.isNotBlank() } ?: config.modelId
+    val selected = config.modelId.substringAfterLast('/')
+    val model = if (config.useLatestModel) {
+        selected.takeIf { it.isNotBlank() }?.let { "$it (auto)" } ?: "Newest available"
+    } else selected
     return if (model.isNotBlank()) "$planOrAuth · $model" else planOrAuth
-}
-
-@Composable
-private fun ShizukuRow(
-    status: ShizukuStatus,
-    onGrant: () -> Unit,
-    onRefresh: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val color = when (status) {
-            ShizukuStatus.CONNECTED -> MaterialTheme.colorScheme.secondary
-            ShizukuStatus.PERMISSION_NEEDED -> MaterialTheme.colorScheme.error
-            else -> MaterialTheme.colorScheme.outline
-        }
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color),
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Shizuku",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                status.displayLabel.uppercase(),
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 0.7.sp,
-                ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (status == ShizukuStatus.PERMISSION_NEEDED) {
-            TextButton(onClick = onGrant) {
-                Text("Grant")
-            }
-        }
-        TextButton(onClick = onRefresh) { Text("Refresh") }
-    }
 }
 
 @Composable
@@ -978,44 +907,39 @@ private fun PlanPickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Provider") },
+        title = { Text("Add provider") },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     "Choose a plan preset, or continue with a blank custom provider.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(8.dp))
                 ProviderPresets.ALL.forEach { plan ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(InstrumentCorner)
-                            .border(
-                                Hairline,
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                                InstrumentCorner,
-                            )
-                            .clickable { onSelectPlan(plan.id) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .clip(CardCorner)
+                            .background(tokens().panel)
+                            .border(1.dp, tokens().line, CardCorner)
+                            .pressFade(onClick = { onSelectPlan(plan.id) })
+                            .padding(horizontal = 16.dp, vertical = 13.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
                         Text(
                             plan.title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = tokens().ink,
                         )
                         Text(
                             plan.subtitle,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = tokens().secondary,
                         )
                     }
                 }
@@ -1035,25 +959,56 @@ private fun DeviceLoginDialog(
     state: DeviceLoginUi,
     onOpenVerification: () -> Unit,
     onCancel: () -> Unit,
+    onRetry: () -> Unit,
 ) {
+    val context = LocalContext.current
+    var now by remember(state.expiresAtEpochMs) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.expiresAtEpochMs, state.busy) {
+        val expiry = state.expiresAtEpochMs ?: return@LaunchedEffect
+        while (state.busy && now < expiry) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    fun copyCode() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("ChatGPT login code", state.userCode))
+    }
     AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text("Sign in with ChatGPT") },
+        onDismissRequest = { if (!state.saving) onCancel() },
+        properties = DialogProperties(dismissOnClickOutside = false),
+        title = { Text("Log in with ChatGPT") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    "Enter this code on the verification page:",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    state.userCode,
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 2.sp,
-                    ),
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (state.userCode.isNotBlank() && state.error == null && !state.saving) {
+                    Text("Copy this code, open ChatGPT, then enter it to approve the connection.")
+                    SelectionContainer {
+                        Text(
+                            state.userCode,
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                fontFamily = monoFamily(),
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 2.sp,
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    TextButton(onClick = ::copyCode) { Text("Copy code") }
+                    state.expiresAtEpochMs?.let { expiry ->
+                        val secondsLeft = ((expiry - now + 999) / 1000).coerceAtLeast(0)
+                        Text(
+                            "Code expires in ${secondsLeft / 60}:${(secondsLeft % 60).toString().padStart(2, '0')}. We'll keep checking while you sign in.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text(
+                        "Return here after approval. If prompted, enable device code login in ChatGPT Settings > Security. Workspace accounts may need admin approval.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 if (state.busy) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1061,11 +1016,22 @@ private fun DeviceLoginDialog(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Text(
-                            "Waiting for authorization…",
+                            when {
+                                state.saving -> "Saving your connection…"
+                                state.networkStatus != null -> "Waiting for connection…"
+                                state.userCode.isBlank() -> "Getting your login code…"
+                                else -> "Waiting for approval in ChatGPT…"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                state.networkStatus?.let { message ->
+                    Text(message, style = MaterialTheme.typography.bodySmall)
+                }
+                if (state.userCode.isNotBlank() && state.error == null && !state.saving) {
+                    TextButton(onClick = onOpenVerification) { Text("Open in external browser") }
                 }
                 state.error?.let { error ->
                     Text(
@@ -1077,15 +1043,23 @@ private fun DeviceLoginDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = onOpenVerification,
-                enabled = state.verificationUrl.isNotBlank(),
-            ) {
-                Text("Open verification page")
+            if (state.error != null) {
+                TextButton(onClick = onRetry) { Text("Try again") }
+            } else {
+                TextButton(
+                    onClick = {
+                        copyCode()
+                        runCatching {
+                            CustomTabsIntent.Builder().setShowTitle(true).build()
+                                .launchUrl(context, Uri.parse(state.verificationUrl))
+                        }.onFailure { onOpenVerification() }
+                    },
+                    enabled = state.verificationUrl.isNotBlank() && !state.saving,
+                ) { Text("Copy & open ChatGPT") }
             }
         },
         dismissButton = {
-            TextButton(onClick = onCancel) { Text("Cancel") }
+            TextButton(onClick = onCancel, enabled = !state.saving) { Text("Cancel") }
         },
     )
 }
@@ -1095,17 +1069,17 @@ private fun DeviceLoginDialog(
 private fun ProviderDialog(
     existing: ProviderConfig?,
     plan: ProviderPresets.Plan?,
-    modelOptions: List<String>,
     openRouterPkcePending: Boolean,
     onDismiss: () -> Unit,
     onSubmit: (ProviderConfig) -> Unit,
-    onSeedModels: (ProviderConfig) -> Unit,
-    onFetchModels: (ProviderConfig) -> Unit,
     onOpenUrl: (String) -> Unit,
     onBeginCodexLogin: (ProviderConfig) -> Unit,
     onBeginOpenRouterLogin: () -> Unit,
     onCompleteOpenRouterLogin: (code: String, draft: ProviderConfig) -> Unit,
-    onAddCustomSlugPersist: ((String) -> Unit)? = null,
+    chatGptConnected: Boolean = false,
+    chatGptEmail: String? = null,
+    chatGptTokens: OAuthTokens? = null,
+    onSignOut: () -> Unit = {},
 ) {
     val isEdit = existing != null
     val initialType = existing?.providerType ?: plan?.providerType ?: ProviderType.CUSTOM_OPENAI
@@ -1138,14 +1112,17 @@ private fun ProviderDialog(
     var customSlugs by remember(existing?.id, plan?.id) {
         mutableStateOf(existing?.customModelSlugs.orEmpty())
     }
-    var newSlug by rememberSaveable(existing?.id, plan?.id) { mutableStateOf("") }
+    var useLatestModel by rememberSaveable(existing?.id, plan?.id) {
+        mutableStateOf(existing?.useLatestModel ?: true)
+    }
     var openRouterCode by rememberSaveable(existing?.id, plan?.id) { mutableStateOf("") }
     var typeExpanded by remember { mutableStateOf(false) }
-    var modelExpanded by remember { mutableStateOf(false) }
     var showApiKey by rememberSaveable { mutableStateOf(false) }
     val providerId = remember(existing?.id) { existing?.id ?: UUID.randomUUID().toString() }
 
-    fun draftConfig(): ProviderConfig = ProviderConfig(
+    fun draftConfig(): ProviderConfig = (existing ?: ProviderConfig(
+        id = providerId, displayName = name, baseUrl = baseUrl, modelId = modelId, providerType = selectedType,
+    )).copy(
         id = providerId,
         displayName = name,
         apiKey = apiKey,
@@ -1156,16 +1133,13 @@ private fun ProviderDialog(
         accountId = accountId,
         customModelSlugs = customSlugs,
         planLabel = planLabel,
+        useLatestModel = useLatestModel,
     )
 
-    LaunchedEffect(existing?.id, plan?.id, selectedType) {
-        onSeedModels(draftConfig())
-    }
-
-    val oauthDeviceAuthed = authMode == AuthMode.OAUTH_DEVICE && accountId.isNotBlank()
+    val oauthDeviceAuthed = authMode == AuthMode.OAUTH_DEVICE && chatGptConnected
+    val signedInChatGpt = selectedType == ProviderType.CODEX_CHATGPT && oauthDeviceAuthed
     val canSubmit = name.isNotBlank() &&
         baseUrl.isNotBlank() &&
-        modelId.isNotBlank() &&
         (apiKey.isNotBlank() || oauthDeviceAuthed)
 
     val activePlan = plan?.takeIf { it.providerType == selectedType }
@@ -1173,7 +1147,7 @@ private fun ProviderDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEdit) "Edit Provider" else "Add Provider") },
+        title = { Text(if (signedInChatGpt) "ChatGPT" else if (isEdit) "Edit provider" else "Add provider") },
         text = {
             Column(
                 modifier = Modifier
@@ -1181,286 +1155,266 @@ private fun ProviderDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Display Name") },
-                    placeholder = { Text("e.g. Kimi Turbo") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                ExposedDropdownMenuBox(
-                    expanded = typeExpanded,
-                    onExpandedChange = { typeExpanded = it },
-                ) {
+                if (signedInChatGpt) {
+                    Text("Signed in", color = tokens().success, style = MaterialTheme.typography.titleMedium)
+                    Text(chatGptEmail ?: "Email unavailable", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(4.dp))
+                } else {
                     OutlinedTextField(
-                        value = selectedType.name.replace("_", " "),
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Provider Type") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
-                        modifier = Modifier
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                            .fillMaxWidth(),
-                    )
-                    ExposedDropdownMenu(
-                        expanded = typeExpanded,
-                        onDismissRequest = { typeExpanded = false },
-                    ) {
-                        ProviderType.entries.forEach { type ->
-                            DropdownMenuItem(
-                                text = { Text(type.name.replace("_", " ")) },
-                                onClick = {
-                                    selectedType = type
-                                    typeExpanded = false
-                                    val defaults = ProviderPresets.forType(type)
-                                    if (defaults != null) {
-                                        if (baseUrl.isBlank() || !isEdit) {
-                                            baseUrl = defaults.defaultBaseUrl
-                                        }
-                                        if (modelId.isBlank() || !isEdit) {
-                                            modelId = defaults.defaultModelId
-                                        }
-                                        if (name.isBlank() || name == plan?.defaultDisplayName) {
-                                            name = defaults.defaultDisplayName
-                                        }
-                                        authMode = defaults.authMode
-                                        planLabel = defaults.planLabel
-                                        if (customSlugs.isEmpty()) {
-                                            customSlugs = emptyList()
-                                        }
-                                    }
-                                    onSeedModels(
-                                        ProviderConfig(
-                                            id = providerId,
-                                            displayName = name,
-                                            apiKey = apiKey,
-                                            baseUrl = baseUrl,
-                                            modelId = modelId,
-                                            providerType = type,
-                                            authMode = authMode,
-                                            accountId = accountId,
-                                            customModelSlugs = customSlugs,
-                                            planLabel = planLabel,
-                                        ),
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-
-                if (selectedType == ProviderType.CLAUDE) {
-                    Text(
-                        "Claude.ai subscription login is not supported in third-party apps. " +
-                            "Use an Anthropic Console API key.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    val consoleUrl = activePlan?.consoleUrl.orEmpty()
-                    if (consoleUrl.isNotBlank()) {
-                        TextButton(onClick = { onOpenUrl(consoleUrl) }) {
-                            Text("Open Console API keys")
-                        }
-                    }
-                }
-
-                if (selectedType == ProviderType.CODEX_CHATGPT ||
-                    activePlan?.supportsDeviceLogin == true
-                ) {
-                    TextButton(
-                        onClick = {
-                            authMode = AuthMode.OAUTH_DEVICE
-                            onBeginCodexLogin(draftConfig())
-                        },
-                    ) {
-                        Text(
-                            if (oauthDeviceAuthed) "Re-sign in with ChatGPT"
-                            else "Sign in with ChatGPT",
-                        )
-                    }
-                    if (oauthDeviceAuthed) {
-                        Text(
-                            "Signed in · account ${accountId.take(8)}…",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontFamily = FontFamily.Monospace,
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                if (selectedType == ProviderType.OPENROUTER ||
-                    activePlan?.supportsPkceLogin == true
-                ) {
-                    TextButton(onClick = onBeginOpenRouterLogin) {
-                        Text("Sign in with OpenRouter")
-                    }
-                    if (openRouterPkcePending) {
-                        OutlinedTextField(
-                            value = openRouterCode,
-                            onValueChange = { openRouterCode = it },
-                            label = { Text("Authorization code") },
-                            placeholder = { Text("Paste code from OpenRouter") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        TextButton(
-                            onClick = {
-                                onCompleteOpenRouterLogin(openRouterCode, draftConfig())
-                            },
-                            enabled = openRouterCode.isNotBlank(),
-                        ) {
-                            Text("Complete OpenRouter sign-in")
-                        }
-                    }
-                }
-
-                val keyHint = activePlan?.apiKeyHint.orEmpty()
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it },
-                    label = {
-                        Text(
-                            if (oauthDeviceAuthed ||
-                                (selectedType == ProviderType.CODEX_CHATGPT &&
-                                    authMode == AuthMode.OAUTH_DEVICE)
-                            ) {
-                                "API Key (optional)"
-                            } else {
-                                "API Key"
-                            },
-                        )
-                    },
-                    placeholder = {
-                        if (keyHint.isNotBlank()) Text(keyHint)
-                    },
-                    singleLine = true,
-                    visualTransformation = if (showApiKey) VisualTransformation.None
-                    else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    trailingIcon = {
-                        TextButton(onClick = { showApiKey = !showApiKey }) {
-                            Text(
-                                if (showApiKey) "hide" else "show",
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it },
-                    label = { Text("Base URL") },
-                    placeholder = { Text("https://api.example.com/v1") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                ExposedDropdownMenuBox(
-                    expanded = modelExpanded,
-                    onExpandedChange = { modelExpanded = it },
-                ) {
-                    OutlinedTextField(
-                        value = modelId,
-                        onValueChange = { modelId = it },
-                        label = { Text("Model ID / slug") },
-                        placeholder = { Text("e.g. gpt-5.4, anthropic/claude-sonnet-4.5") },
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Display name") },
+                        placeholder = { Text("e.g. Kimi Turbo") },
                         singleLine = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
-                        modifier = Modifier
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable)
-                            .fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    ExposedDropdownMenu(
-                        expanded = modelExpanded,
-                        onDismissRequest = { modelExpanded = false },
+
+                    ExposedDropdownMenuBox(
+                        expanded = typeExpanded,
+                        onExpandedChange = { typeExpanded = it },
                     ) {
-                        if (modelOptions.isEmpty()) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "No suggestions yet — fetch or type a slug",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                },
-                                onClick = { modelExpanded = false },
-                            )
-                        } else {
-                            modelOptions.forEach { option ->
+                        OutlinedTextField(
+                            value = selectedType.name.replace("_", " "),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Provider type") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
+                            modifier = Modifier
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                                .fillMaxWidth(),
+                        )
+                        ExposedDropdownMenu(
+                            expanded = typeExpanded,
+                            onDismissRequest = { typeExpanded = false },
+                        ) {
+                            ProviderType.entries.forEach { type ->
                                 DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            option,
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 13.sp,
-                                            ),
-                                        )
-                                    },
+                                    text = { Text(type.name.replace("_", " ")) },
                                     onClick = {
-                                        modelId = option
-                                        modelExpanded = false
+                                        selectedType = type
+                                        useLatestModel = true
+                                        typeExpanded = false
+                                        val defaults = ProviderPresets.forType(type)
+                                        if (defaults != null) {
+                                            if (baseUrl.isBlank() || !isEdit) {
+                                                baseUrl = defaults.defaultBaseUrl
+                                            }
+                                            if (modelId.isBlank() || !isEdit) {
+                                                modelId = defaults.defaultModelId
+                                            }
+                                            if (name.isBlank() || name == plan?.defaultDisplayName) {
+                                                name = defaults.defaultDisplayName
+                                            }
+                                            authMode = defaults.authMode
+                                            planLabel = defaults.planLabel
+                                            if (customSlugs.isEmpty()) {
+                                                customSlugs = emptyList()
+                                            }
+                                        }
                                     },
                                 )
                             }
                         }
                     }
-                }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedTextField(
-                        value = newSlug,
-                        onValueChange = { newSlug = it },
-                        label = { Text("Add model slug") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        onClick = {
-                            val slug = newSlug.trim()
-                            if (slug.isEmpty()) return@TextButton
-                            customSlugs = (customSlugs + slug).distinct()
-                            if (modelId.isBlank()) modelId = slug
-                            onAddCustomSlugPersist?.invoke(slug)
-                            onSeedModels(draftConfig().copy(customModelSlugs = customSlugs, modelId = modelId))
-                            newSlug = ""
-                        },
-                        enabled = newSlug.isNotBlank(),
-                    ) {
-                        Text("Add")
+                    if (selectedType == ProviderType.CLAUDE) {
+                        Text(
+                            "Claude.ai subscription login is not supported in third-party apps. " +
+                                "Use an Anthropic Console API key.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val consoleUrl = activePlan?.consoleUrl.orEmpty()
+                        if (consoleUrl.isNotBlank()) {
+                            TextButton(onClick = { onOpenUrl(consoleUrl) }) {
+                                Text("Open Console API keys")
+                            }
+                        }
                     }
+
+                    if (selectedType == ProviderType.CODEX_CHATGPT ||
+                        activePlan?.supportsDeviceLogin == true
+                    ) {
+                        TextButton(
+                            onClick = {
+                                authMode = AuthMode.OAUTH_DEVICE
+                                onBeginCodexLogin(draftConfig())
+                            },
+                        ) {
+                            Text(
+                                if (oauthDeviceAuthed) "Re-sign in with ChatGPT"
+                                else "Sign in with ChatGPT",
+                            )
+                        }
+                        if (oauthDeviceAuthed) {
+                            Text(
+                                "Signed in · account ${accountId.take(8)}…",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontFamily = monoFamily(),
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    if (selectedType == ProviderType.OPENROUTER ||
+                        activePlan?.supportsPkceLogin == true
+                    ) {
+                        TextButton(onClick = onBeginOpenRouterLogin) {
+                            Text("Sign in with OpenRouter")
+                        }
+                        if (openRouterPkcePending) {
+                            OutlinedTextField(
+                                value = openRouterCode,
+                                onValueChange = { openRouterCode = it },
+                                label = { Text("Authorization code") },
+                                placeholder = { Text("Paste code from OpenRouter") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            TextButton(
+                                onClick = {
+                                    onCompleteOpenRouterLogin(openRouterCode, draftConfig())
+                                },
+                                enabled = openRouterCode.isNotBlank(),
+                            ) {
+                                Text("Complete OpenRouter sign-in")
+                            }
+                        }
+                    }
+
+                    val keyHint = activePlan?.apiKeyHint.orEmpty()
+                    if (selectedType == ProviderType.OPENCODE_GO) {
+                        TextButton(onClick = { onOpenUrl("https://opencode.ai/auth") }) { Text("Get OpenCode Go API key") }
+                    }
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        label = {
+                            Text(
+                                if (oauthDeviceAuthed ||
+                                    (selectedType == ProviderType.CODEX_CHATGPT &&
+                                        authMode == AuthMode.OAUTH_DEVICE)
+                                ) {
+                                    "API key (optional)"
+                                } else {
+                                    "API key"
+                                },
+                            )
+                        },
+                        placeholder = {
+                            if (keyHint.isNotBlank()) Text(keyHint)
+                        },
+                        singleLine = true,
+                        visualTransformation = if (showApiKey) VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = {
+                            TextButton(onClick = { showApiKey = !showApiKey }) {
+                                Text(
+                                    if (showApiKey) "hide" else "show",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    OutlinedTextField(
+                        value = baseUrl,
+                        onValueChange = { baseUrl = it },
+                        label = { Text("Base URL") },
+                        placeholder = { Text("https://api.example.com/v1") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
 
-                TextButton(
-                    onClick = { onFetchModels(draftConfig()) },
-                    enabled = apiKey.isNotBlank() || oauthDeviceAuthed,
-                ) {
-                    Text("Fetch models")
+                if (signedInChatGpt) {
+                    chatGptTokens?.let { ChatGptTokenSection(it) }
+                    TextButton(onClick = onSignOut) { Text("Sign out", color = MaterialTheme.colorScheme.error) }
                 }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (canSubmit) {
-                        onSubmit(draftConfig())
-                    }
+                    if (signedInChatGpt) onDismiss()
+                    else if (canSubmit) onSubmit(draftConfig())
                 },
                 enabled = canSubmit,
             ) {
-                Text(if (isEdit) "Save" else "Add")
+                Text(if (signedInChatGpt) "Done" else if (isEdit) "Save" else "Connect")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            if (!signedInChatGpt) TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+@Composable
+private fun ChatGptTokenSection(credentials: OAuthTokens) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().pressFade(onClick = { expanded = !expanded })
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Auth tokens", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            LucideIcon(
+                icon = if (expanded) Lucide.ChevronDown else Lucide.ChevronRight,
+                contentDescription = if (expanded) "Hide auth tokens" else "Show auth tokens",
+                tint = tokens().secondary,
+                size = 18.dp,
+            )
+        }
+        if (expanded) {
+            AuthTokenField("Access token", credentials.accessToken)
+            if (credentials.expiresAtEpochMs > 0) {
+                val expiry = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                    .format(java.util.Date(credentials.expiresAtEpochMs))
+                Text("Expires $expiry · refreshes automatically", style = MaterialTheme.typography.bodySmall)
+            }
+            AuthTokenField("Refresh token", credentials.refreshToken)
+            AuthTokenField("ID token", credentials.idToken)
+        }
+    }
+}
+
+@Composable
+private fun AuthTokenField(label: String, value: String) {
+    val context = LocalContext.current
+    var revealed by remember(value) { mutableStateOf(false) }
+    var copied by remember(value) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+            if (value.isNotBlank()) {
+                TextButton(onClick = { revealed = !revealed }) { Text(if (revealed) "Hide" else "Show") }
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText(label, value)
+                    clip.description.extras = android.os.PersistableBundle().apply {
+                        putBoolean("android.content.extra.IS_SENSITIVE", true)
+                    }
+                    clipboard.setPrimaryClip(clip)
+                    copied = true
+                }) { Text(if (copied) "Copied" else "Copy") }
+            }
+        }
+        if (revealed) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = {},
+                readOnly = true,
+                maxLines = 3,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = monoFamily()),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            Text(if (value.isBlank()) "Not provided" else "••••••••••••", color = tokens().secondary)
+        }
+    }
 }

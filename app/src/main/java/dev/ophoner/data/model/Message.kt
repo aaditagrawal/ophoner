@@ -44,5 +44,9 @@ sealed interface ContentBlock {
     data class Stats(
         val outputChars: Int,
         val durationMs: Long,
+        val inputTokens: Long? = null,
+        val outputTokens: Long? = null,
+        val cacheReadInputTokens: Long? = null,
+        val cacheCreationInputTokens: Long? = null,
     ) : ContentBlock
 }

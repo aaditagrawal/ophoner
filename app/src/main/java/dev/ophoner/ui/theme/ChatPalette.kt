@@ -5,17 +5,14 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 
 /**
- * Theme-aware palette for chat surfaces. Reads LocalIsDark + LocalAccent
- * so light/dark + accent picks propagate without re-plumbing every call site.
- *
- * Tool cards stay flat/solid (hairline border, no glass translucency).
- * User bubbles keep accent fill for turn readability against panel surfaces.
+ * Chat surfaces derived from [OphonerTokens]. Assistant replies sit directly on the page
+ * (no bubble) — deliberate empty space; user turns get a soft accent-tinted bubble.
  */
 data class ChatPalette(
     val userBubble: Color,
+    val userBubbleBorder: Color,
     val onUserBubble: Color,
-    val assistantBubble: Color,
-    val onAssistantBubble: Color,
+    val onAssistant: Color,
     val toolCardBg: Color,
     val toolCardBorder: Color,
     val codeBlockBg: Color,
@@ -29,37 +26,19 @@ data class ChatPalette(
 @Composable
 @ReadOnlyComposable
 fun chatPalette(): ChatPalette {
-    val isDark = isDarkTheme()
-    val accent = accentColor()
-    return if (isDark) {
-        ChatPalette(
-            userBubble = accent,
-            onUserBubble = Color.White,
-            assistantBubble = AssistantBubble,
-            onAssistantBubble = TextPrimary,
-            toolCardBg = ToolCardBg,
-            toolCardBorder = ToolCardBorder,
-            codeBlockBg = CodeBlockBg,
-            codeText = Color(0xFFE8E4DC),
-            mathText = accent,
-            mathBg = accent.copy(alpha = 0.12f),
-            tableHeaderBg = DarkSurface,
-            tableRowAltBg = DarkSurfaceVariant,
-        )
-    } else {
-        ChatPalette(
-            userBubble = accent,
-            onUserBubble = Color.White,
-            assistantBubble = LightAssistantBubble,
-            onAssistantBubble = LightTextPrimary,
-            toolCardBg = LightToolCardBg,
-            toolCardBorder = LightToolCardBorder,
-            codeBlockBg = LightCodeBlockBg,
-            codeText = Color(0xFF1A1A18),
-            mathText = accent,
-            mathBg = accent.copy(alpha = 0.10f),
-            tableHeaderBg = LightSurface,
-            tableRowAltBg = LightSurfaceVariant,
-        )
-    }
+    val t = tokens()
+    return ChatPalette(
+        userBubble = t.active,
+        userBubbleBorder = t.activeBorder,
+        onUserBubble = t.ink,
+        onAssistant = t.ink,
+        toolCardBg = t.panel,
+        toolCardBorder = t.line,
+        codeBlockBg = t.code,
+        codeText = t.ink,
+        mathText = t.accent,
+        mathBg = t.active,
+        tableHeaderBg = t.panelHigh,
+        tableRowAltBg = t.panel,
+    )
 }

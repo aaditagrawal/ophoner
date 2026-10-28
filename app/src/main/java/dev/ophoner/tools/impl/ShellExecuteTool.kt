@@ -29,7 +29,7 @@ class ShellExecuteTool @Inject constructor(
 ) : ToolExecutor {
     override val definition = Tool(
         name = "shell_execute",
-        description = "Execute a shell command on the Android device. Returns stdout, stderr, and exit code. Commands run in the app sandbox (no root).",
+        description = "Execute a shell command. Uses Shizuku's shell identity when enabled and connected, otherwise the app sandbox. No root required. Returns execution mode, stdout, stderr, and exit code. Disabled in folder chats. Commands require approval unless YOLO is enabled.",
         parameters = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
@@ -53,6 +53,8 @@ class ShellExecuteTool @Inject constructor(
             ?: return ToolResult(toolUseId, "Missing required parameter: command", isError = true)
         val timeout = arguments["timeout_ms"]?.jsonPrimitive?.long ?: 30_000L
         val yolo = currentCoroutineContext()[ToolExecutionContext]?.yoloMode == true
+        val context = currentCoroutineContext()[ToolExecutionContext]
+        if (!context?.rootUri.isNullOrBlank()) return ToolResult(toolUseId, "Shell is disabled in folder chats. Use scoped file tools or start a general chat.", true)
 
         // Policy check before any execution.
         val decision = classifyCommand(command)
@@ -66,13 +68,11 @@ class ShellExecuteTool @Inject constructor(
         }
 
         val allow = decision as CommandDecision.Allow
-        if (allow.category == "unscoped" && !yolo) {
+        if (!yolo && context?.actionApproved != true) {
             writeAudit(command, "SOFT_BLOCK(yolo_required)")
             return ToolResult(
                 toolUseId,
-                "Error: command is not on the shell allowlist. Enable YOLO mode in Settings " +
-                    "(Agent) to auto-allow unscoped shell commands, or use an allowlisted " +
-                    "read-only command (ls, cat, grep, …).",
+                "Error: shell execution needs approval. Run through the agent approval flow or enable YOLO mode.",
                 isError = true,
             )
         }

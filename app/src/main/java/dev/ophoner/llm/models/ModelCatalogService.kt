@@ -4,39 +4,78 @@ import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.data.model.ProviderPresets
 import dev.ophoner.data.model.ProviderType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Fetches remote model id lists for settings pickers.
- * Callers should merge [fetchModels] results with [mergeModelOptions] (custom slugs + presets).
+ * Uses models.dev for public providers and account/endpoint discovery for other connections.
  */
 @Singleton
 class ModelCatalogService @Inject constructor(
-    private val httpClient: OkHttpClient,
+    httpClient: OkHttpClient,
     private val json: Json,
+    private val modelsDevCatalog: ModelsDevCatalog,
 ) {
-    suspend fun fetchModels(config: ProviderConfig): Result<List<String>> = withContext(Dispatchers.IO) {
-        runCatching {
-            when (config.providerType) {
-                ProviderType.OPENAI, ProviderType.CUSTOM_OPENAI ->
+    private val httpClient = httpClient.newBuilder().callTimeout(20, TimeUnit.SECONDS).build()
+
+    suspend fun cachedModels(config: ProviderConfig): List<String> =
+        modelsDevProviderId(config)?.let { modelsDevCatalog.cachedModels(it) }.orEmpty()
+
+    suspend fun fetchModels(config: ProviderConfig): Result<CatalogModels> = withContext(Dispatchers.IO) {
+        try {
+            if (config.providerType == ProviderType.CODEX_CHATGPT) {
+                // Subscription availability comes from the account; release order comes from models.dev.
+                val available = fetchCodexModels(config)
+                val releases = try {
+                    modelsDevCatalog.fetchModels("openai")
+                } catch (error: Exception) {
+                    ensureActive()
+                    return@withContext Result.success(CatalogModels(
+                        available,
+                        "Could not refresh models.dev. Showing your account's model order.",
+                    ))
+                }
+                val accountIds = available.toSet()
+                val ranked = if (releases.releaseDates.isNotEmpty()) {
+                    // Stable sorting keeps the account's preferred order for same-day releases.
+                    available.filter { it in releases.ids }.sortedByDescending { releases.releaseDates[it].orEmpty() }
+                } else releases.ids.filter { it in accountIds }
+                return@withContext Result.success(CatalogModels(
+                    (ranked + available).distinct(), releases.warning,
+                ))
+            }
+            val publicProvider = modelsDevProviderId(config)
+            if (publicProvider != null) {
+                try {
+                    return@withContext Result.success(modelsDevCatalog.fetchModels(publicProvider))
+                } catch (error: Exception) {
+                    ensureActive()
+                    if (config.apiKey.isBlank()) throw error
+                    // First launch during a catalog outage can still use the provider's own API.
+                }
+            }
+            val ids = when (config.providerType) {
+                ProviderType.OPENAI, ProviderType.CUSTOM_OPENAI, ProviderType.OPENCODE_GO ->
                     fetchOpenAiStyleModels(config.baseUrl, bearer = config.apiKey)
 
                 ProviderType.OPENROUTER ->
-                    prioritizeOpenRouter(
-                        fetchOpenAiStyleModels(OPENROUTER_MODELS_URL, bearer = config.apiKey),
-                    )
+                    fetchOpenAiStyleModels(config.baseUrl, bearer = config.apiKey)
 
                 ProviderType.CLAUDE, ProviderType.CUSTOM_ANTHROPIC ->
                     fetchAnthropicModels(config.baseUrl, apiKey = config.apiKey)
@@ -47,31 +86,31 @@ class ModelCatalogService @Inject constructor(
                 ProviderType.CODEX_CHATGPT ->
                     fetchCodexModels(config)
             }
+            ensureActive()
+            Result.success(CatalogModels(ids))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Result.failure(error)
         }
     }
 
     /**
-     * Union of current model, custom slugs, presets, and remote ids.
-     * Distinct; current [ProviderConfig.modelId] first when non-blank; remainder sorted.
+     * Keep the selection and custom ids first, followed by the catalog's release-date order.
      */
     fun mergeModelOptions(
         remote: List<String>,
         config: ProviderConfig,
-        presets: List<String>,
     ): List<String> {
         val current = config.modelId.trim().takeIf { it.isNotEmpty() }
         val rest = LinkedHashSet<String>()
         config.customModelSlugs.forEach { slug ->
             slug.trim().takeIf { it.isNotEmpty() && it != current }?.let(rest::add)
         }
-        presets.forEach { slug ->
-            slug.trim().takeIf { it.isNotEmpty() && it != current }?.let(rest::add)
-        }
         remote.forEach { slug ->
             slug.trim().takeIf { it.isNotEmpty() && it != current }?.let(rest::add)
         }
-        val sortedRest = rest.sorted()
-        return if (current != null) listOf(current) + sortedRest else sortedRest
+        return if (current != null) listOf(current) + rest else rest.toList()
     }
 
     private fun fetchOpenAiStyleModels(baseOrUrl: String, bearer: String): List<String> {
@@ -104,6 +143,9 @@ class ModelCatalogService @Inject constructor(
 
     private fun fetchGeminiModels(config: ProviderConfig): List<String> {
         requireApiKey(config.apiKey)
+        if (modelsDevProviderId(config) == null) {
+            return fetchOpenAiStyleModels(config.baseUrl, bearer = config.apiKey)
+        }
         // Prefer native Generative Language list; strip "models/" and keep gemini* names.
         return runCatching {
             val url = GEMINI_NATIVE_MODELS.toHttpUrl().newBuilder()
@@ -121,7 +163,11 @@ class ModelCatalogService @Inject constructor(
 
     private fun fetchCodexModels(config: ProviderConfig): List<String> {
         requireApiKey(config.apiKey)
-        val url = "${config.baseUrl.trimEnd('/')}/models"
+        val url = "${config.baseUrl.trimEnd('/')}/models".toHttpUrl().newBuilder()
+            // This is a Codex compatibility version, not Ophoner's app version.
+            // The unversioned catalog avoids filtering models against an unrelated 0.x release.
+            .addQueryParameter("client_version", "0.0.0")
+            .build()
         val builder = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer ${config.apiKey}")
@@ -130,14 +176,28 @@ class ModelCatalogService @Inject constructor(
         if (accountId.isNotEmpty()) {
             builder.header("ChatGPT-Account-ID", accountId)
         }
-        return parseOpenAiDataIds(execute(builder.build()))
+        val root = json.parseToJsonElement(execute(builder.build())).jsonObject
+        val models = root["models"] as? JsonArray ?: root["data"] as? JsonArray
+            ?: throw IOException("ChatGPT model catalog did not include a model list")
+        return models.mapNotNull { element ->
+            val model = element as? JsonObject ?: return@mapNotNull null
+            // API-key availability does not restrict models offered to a ChatGPT subscription.
+            if (model["hidden"]?.jsonPrimitive?.booleanOrNull == true ||
+                model["visibility"]?.jsonPrimitive?.contentOrNull == "hide"
+            ) return@mapNotNull null
+            val id = (model["slug"] ?: model["id"])?.jsonPrimitive?.contentOrNull
+                ?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            id to (model["priority"]?.jsonPrimitive?.intOrNull ?: Int.MAX_VALUE)
+        }.sortedBy { it.second }.map { it.first }.distinct().also {
+            if (it.isEmpty()) throw IOException("No available ChatGPT models were returned")
+        }
     }
 
     private fun execute(request: Request): String {
         httpClient.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Model catalog HTTP ${response.code}: $body")
+                throw IOException("Model catalog HTTP ${response.code} (${request.url.host})")
             }
             return body
         }
@@ -146,7 +206,7 @@ class ModelCatalogService @Inject constructor(
     private fun parseOpenAiDataIds(raw: String): List<String> {
         val root = json.parseToJsonElement(raw).jsonObject
         val data = root["data"] as? JsonArray
-            ?: throw IOException("Model catalog missing data[]: $raw")
+            ?: throw IOException("Model catalog missing data[]")
         return data.mapNotNull { element ->
             (element as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull?.trim()
                 ?.takeIf { it.isNotEmpty() }
@@ -156,7 +216,7 @@ class ModelCatalogService @Inject constructor(
     private fun parseGeminiModelNames(raw: String): List<String> {
         val root = json.parseToJsonElement(raw).jsonObject
         val models = root["models"] as? JsonArray
-            ?: throw IOException("Gemini catalog missing models[]: $raw")
+            ?: throw IOException("Gemini catalog missing models[]")
         return models.mapNotNull { element ->
             val name = (element as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
                 ?: return@mapNotNull null
@@ -165,23 +225,28 @@ class ModelCatalogService @Inject constructor(
         }.distinct().sorted()
     }
 
-    private fun prioritizeOpenRouter(ids: List<String>): List<String> {
-        val popular = ProviderPresets.forType(ProviderType.OPENROUTER)?.suggestedModels.orEmpty()
-        val popularSet = popular.toSet()
-        val presentPopular = popular.filter { it in ids.toSet() }
-        val rest = ids.filterNot { it in popularSet }.sorted()
-        return presentPopular + rest
-    }
-
     private fun requireApiKey(apiKey: String) {
         if (apiKey.isBlank()) {
             throw IOException("API key required to fetch models")
         }
     }
 
-    private companion object {
-        const val OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-        const val GEMINI_NATIVE_MODELS = "https://generativelanguage.googleapis.com/v1beta/models"
-        const val ANTHROPIC_VERSION = "2023-06-01"
+    companion object {
+        /** Never substitute the public API catalog for a custom URL or a ChatGPT subscription. */
+        fun modelsDevProviderId(config: ProviderConfig): String? {
+            val defaultUrl = ProviderPresets.forType(config.providerType)?.defaultBaseUrl
+            if (config.baseUrl.trimEnd('/') != defaultUrl?.trimEnd('/')) return null
+            return when (config.providerType) {
+                ProviderType.OPENAI -> "openai"
+                ProviderType.CLAUDE -> "anthropic"
+                ProviderType.GEMINI -> "google"
+                ProviderType.OPENROUTER -> "openrouter"
+                ProviderType.OPENCODE_GO -> "opencode-go"
+                else -> null
+            }
+        }
+
+        private const val GEMINI_NATIVE_MODELS = "https://generativelanguage.googleapis.com/v1beta/models"
+        private const val ANTHROPIC_VERSION = "2023-06-01"
     }
 }

@@ -1,5 +1,5 @@
 [versions]
-agp = "9.4.1"
+agp = "9.5.0"
 kotlin = "2.4.21"
 ksp = "2.3.12"
 compose-bom = "2026.09.00"
@@ -7,13 +7,13 @@ compose-bom = "2026.09.00"
 # (MaterialExpressiveTheme, MotionScheme, LoadingIndicator, MaterialShapes, toShape())
 # are marked `internal` in material3 1.4.x stable and only exposed from 1.5.x alphas.
 # Bump in lockstep once Expressive ships as stable.
-material3 = "1.5.0-alpha25"
+material3 = "1.5.0-alpha29"
 graphics-shapes = "1.1.0"
 hilt = "2.60.1"
 hilt-navigation-compose = "1.4.0"
 room = "2.8.5"
-datastore = "1.2.1"
-okhttp = "5.5.0"
+datastore = "1.3.0"
+okhttp = "5.5.1"
 coroutines = "1.11.0"
 serialization = "1.12.0"
 navigation = "2.10.2"
@@ -21,7 +21,7 @@ haze = "2.0.1"
 lifecycle = "2.11.0"
 activity-compose = "1.13.0"
 core-ktx = "1.19.1"
-dependency-analysis = "3.19.2"
+dependency-analysis = "3.20.0"
 
 [libraries]
 haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }

@@ -105,45 +105,9 @@ class ShellExecuteTool @Inject constructor(
     }
 
     private fun classifyCommand(command: String): CommandDecision {
-        val trimmed = command.trim()
-        if (trimmed.isEmpty()) return CommandDecision.Reject("empty command")
-        if (trimmed.contains('\u0000')) return CommandDecision.Reject("null byte in command")
-
-        // Denylist: patterns that are catastrophic regardless of context.
-        for ((pattern, reason) in DENY_PATTERNS) {
-            if (pattern.containsMatchIn(trimmed)) {
-                return CommandDecision.Reject(reason)
-            }
-        }
-
-        // Extract the first token — accounting for leading env assignments
-        // and common prefixes like `sudo` or `env`.
-        val firstToken = firstCommandToken(trimmed) ?: trimmed.substringBefore(' ')
-        if (firstToken in ALLOW_FIRST_TOKENS) {
-            return CommandDecision.Allow("allowlist")
-        }
-
-        // Not on allowlist and not on denylist — permit but mark as UNSCOPED
-        // so the audit log distinguishes it from vetted commands.
-        return CommandDecision.Allow("unscoped")
-    }
-
-    private fun firstCommandToken(command: String): String? {
-        // Strip leading `VAR=value` assignments and a single `sudo`/`env` prefix.
-        var rest = command.trimStart()
-        while (true) {
-            val space = rest.indexOf(' ')
-            if (space <= 0) return rest.takeIf { it.isNotEmpty() }
-            val head = rest.substring(0, space)
-            if (head.matches(Regex("^[A-Za-z_][A-Za-z0-9_]*=.*"))) {
-                rest = rest.substring(space + 1).trimStart()
-                continue
-            }
-            if (head == "sudo" || head == "env") {
-                rest = rest.substring(space + 1).trimStart()
-                continue
-            }
-            return head
+        return when (val decision = ShellPolicy.classify(command)) {
+            is ShellPolicy.Decision.Allow -> CommandDecision.Allow(decision.category)
+            is ShellPolicy.Decision.Reject -> CommandDecision.Reject(decision.reason)
         }
     }
 
@@ -185,40 +149,5 @@ class ShellExecuteTool @Inject constructor(
         } catch (_: Throwable) {
             null
         }
-    }
-
-    companion object {
-        private val ALLOW_FIRST_TOKENS = setOf(
-            "ls", "pwd", "cat", "grep", "find", "echo", "which", "ps", "cd",
-            "head", "tail", "wc", "stat", "df", "du", "date", "uname", "env",
-            "printenv", "whoami",
-        )
-
-        // Catastrophic patterns — matched anywhere in the command string.
-        private val DENY_PATTERNS: List<Pair<Regex, String>> = listOf(
-            Regex("""\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+/(\s|$)""") to
-                "rm -rf targeting /",
-            Regex("""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/\*""") to
-                "rm -rf targeting /*",
-            Regex("""\bmkfs(\.|\s)""") to "mkfs (filesystem format)",
-            Regex("""\bdd\s+[^|]*\bif=""") to "dd with input file",
-            Regex(""":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:""") to "fork bomb",
-            Regex("""\bchmod\s+(-[a-zA-Z]*\s+)?777\s+/(\s|$)""") to "chmod 777 on /",
-            Regex("""\bchmod\s+-R\s+777\s+/""") to "recursive chmod 777 on /",
-            Regex("""(^|[\s;&|`])>\s*/system/""") to "write into /system",
-            Regex("""(^|[\s;&|`])>>\s*/system/""") to "append into /system",
-            Regex("""\btee\s+(-[a-zA-Z]+\s+)?/system/""") to "tee into /system",
-            Regex("""\bmount\s+""") to "mount operation",
-            Regex("""\bumount\s+""") to "umount operation",
-            Regex("""\breboot\b""") to "reboot",
-            Regex("""\bshutdown\b""") to "shutdown",
-            Regex("""\bhalt\b""") to "halt",
-            Regex("""\bsu\s+(-|\w+)?""") to "privilege escalation (su)",
-            // Writing into another app's private data directory.
-            Regex("""(^|[\s;&|`>])(>|>>|tee\s+\S*\s+)?/data/data/(?!dev\.ophoner(\.debug)?(/|$))""") to
-                "access to another app's /data/data",
-            Regex("""(^|[\s;&|`>])(>|>>|tee\s+\S*\s+)?/data/user/\d+/(?!dev\.ophoner(\.debug)?(/|$))""") to
-                "access to another app's /data/user",
-        )
     }
 }

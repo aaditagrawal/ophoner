@@ -130,6 +130,7 @@ class IntentLaunchTool @Inject constructor(
 
     private fun openUrl(url: String?): String {
         if (url.isNullOrBlank()) return "Error: missing 'url' parameter."
+        rejectedLaunchUrl(url)?.let { return "Error: $it" }
         val uri = runCatching { Uri.parse(url.trim()) }.getOrNull()
             ?: return "Error: invalid URL."
         if (uri.scheme.isNullOrBlank()) {

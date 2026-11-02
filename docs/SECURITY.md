@@ -29,8 +29,8 @@ Provider JSON export includes API keys for backup/move but does **not** include 
 ### File tools
 - All paths validated before handoff to `FileAccessManager`:
   - Null bytes rejected
-  - Canonicalized paths must not escape the SAF-granted tree
-  - Absolute paths under `/system`, `/proc`, `/sys`, `/vendor`, `/apex`, `/dev`, or other apps' `/data/data/<pkg>` trees are rejected
+  - `..` segments are rejected before canonicalization, including backslash-separated segments
+  - Absolute paths under `/system`, `/proc`, `/sys`, `/vendor`, `/apex`, `/dev`, or other apps' `/data/data/<pkg>` trees are rejected on both the raw path and the canonical path
 - The underlying `FileAccessManager` uses SAF `DocumentFile` APIs; the OS itself sandboxes writes to the URI tree the user picked
 
 ### Web tools
@@ -46,6 +46,10 @@ Provider JSON export includes API keys for backup/move but does **not** include 
 - **Allow list (soft):** `ls`, `pwd`, `cat`, `grep`, `find`, `echo`, `which`, `ps`, `cd`, `head`, `tail`, `wc`, `stat`, `df`, `du`, `date`, `uname`, `env`, `printenv`, `whoami` — these get classified `ALLOW(allowlist)`. Commands outside both lists are `ALLOW(unscoped)` and logged
 - **Audit log:** every execution (allowed or rejected) is appended to `getExternalFilesDir(null)/shell_audit.log` with timestamp + outcome + sanitized command
 - When Shizuku is running, shell commands go through it; the policy gate runs **before** both the Shizuku and sandboxed paths
+
+### Intent launch
+- `intent_launch` open_url allows only `http`, `https`, `mailto`, `tel`, `sms`, `smsto`, `geo`, and `market`
+- `intent:`, `file:`, `content:`, `javascript:`, and `data:` are rejected, as are URLs that contain CR, LF, tab, or NUL
 
 ### Database
 - Room schema versions managed by explicit `Migration` objects — no `fallbackToDestructiveMigration` in release

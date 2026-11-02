@@ -34,9 +34,10 @@ Provider JSON export includes API keys for backup/move but does **not** include 
 - The underlying `FileAccessManager` uses SAF `DocumentFile` APIs; the OS itself sandboxes writes to the URI tree the user picked
 
 ### Web tools
-- `WebFetchTool` rejects non-http(s) schemes (blocks `file://`, `ftp://`, `gopher://`)
-- SSRF guard: host resolved via `InetAddress.getAllByName`, each returned address checked against RFC 1918 + loopback + link-local + CGNAT (100.64/10) + IPv6 ULA (fc00::/7) + IPv6 link-local (fe80::/10)
-- `localhost`, `*.local`, `*.internal` rejected by string match
+- `WebFetchTool` rejects non-http(s) schemes (blocks `file://`, `ftp://`, `gopher://`), URL userinfo, control characters, and hosts where `java.net.URI` and OkHttp disagree
+- SSRF guard runs on the URL and again when the fetch client resolves DNS. Blocked ranges include 0.0.0.0/8, loopback, link-local, RFC 1918, CGNAT (100.64/10), multicast, 240.0.0.0/4, IPv4-mapped forms of those ranges, IPv6 ULA (fc00::/7), and IPv6 link-local (fe80::/10)
+- `localhost`, `*.localhost`, `*.local`, and `*.internal` are rejected by name
+- The fetch client does not follow redirects on its own. `web_fetch` follows at most two redirects and runs the guard on every hop. The shared OkHttp client still follows redirects for provider APIs, including private endpoints the user configured
 - Max response body read into memory: 2 MB (hard cap before parsing)
 
 ### Shell tool

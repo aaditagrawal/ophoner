@@ -6,16 +6,24 @@ on:
   pull_request:
     branches: [main]
 
+# One in-flight run per ref. A newer push replaces the older run.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   android:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6.1.0
@@ -28,19 +36,17 @@ jobs:
         with:
           packages: platform-tools
 
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6.4.0
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6.4.0
-        with:
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
 
-      - name: Assemble debug
-        run: ./gradlew assembleDebug --no-daemon
-
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon
-
-      - name: Android lint
-        run: ./gradlew lintDebug --no-daemon
+      # One task graph: compile once, then package, unit tests, and lint run together.
+      # The setup-gradle action stops the daemon before it saves the cache.
+      # Cache writes stay on the default branch so pull requests cannot evict that shared entry.
+      - name: Assemble, test, and lint
+        run: ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug -Dorg.gradle.vfs.watch=false
 
       - name: Upload lint report
         if: failure()

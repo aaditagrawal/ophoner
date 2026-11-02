@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# A tag build must finish. A second run of the same tag waits instead of cancelling the upload.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4.0.4
+        with:
+          packages: platform-tools
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6.4.0
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6.4.0
+
+      - name: Check tag matches versionName
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t versions < <(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts)
+          if [ "${#versions[@]}" -ne 1 ]; then
+            echo "Expected exactly one versionName in app/build.gradle.kts, found ${#versions[@]}."
+            exit 1
+          fi
+          expected="v${versions[0]}"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match versionName ${versions[0]} (${expected})."
+            exit 1
+          fi
+
+      - name: Configure release signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          present=0
+          for value in "$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD"; do
+            if [ -n "$value" ]; then
+              present=$((present + 1))
+            fi
+          done
+          if [ "$present" -eq 0 ]; then
+            echo "No signing secrets configured. The release artifacts will be unsigned."
+            exit 0
+          fi
+          if [ "$present" -ne 4 ]; then
+            echo "Release signing is partial. Set all of ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD, or none of them."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          {
+            printf 'storeFile=%s\n' "$RUNNER_TEMP/release.keystore"
+            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Build release APK and bundle
+        run: ./gradlew :app:assembleRelease :app:bundleRelease -Dorg.gradle.vfs.watch=false
+
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: rm -f keystore.properties "$RUNNER_TEMP/release.keystore"
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/*.apk)
+          aabs=(app/build/outputs/bundle/release/*.aab)
+          if [ "${#apks[@]}" -ne 1 ] || [ "${#aabs[@]}" -ne 1 ]; then
+            echo "Expected one release APK and one AAB."
+            exit 1
+          fi
+          files=("${apks[0]}" "${aabs[0]}")
+          if [ -f keystore.properties ] || [ -f "$RUNNER_TEMP/release.keystore" ]; then
+            echo "Signing material is still on disk."
+            exit 1
+          fi
+          case "${apks[0]}" in
+            *-unsigned.apk)
+              note="Unsigned release artifacts for ${GITHUB_REF_NAME}. No keystore secrets were configured."
+              ;;
+            *)
+              note="Signed release artifacts for ${GITHUB_REF_NAME}."
+              ;;
+          esac
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --verify-tag \
+              --title "$GITHUB_REF_NAME" \
+              --notes "$note"
+          fi

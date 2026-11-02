@@ -41,6 +41,8 @@ Provider JSON export includes API keys for backup/move but does **not** include 
 
 ### Shell tool
 - **Deny list:** `rm -rf /`, `mkfs`, `dd if=…of=/dev/`, fork bombs, `chmod 777 /`, writes into `/system`, `tee /system`, `mount`/`umount`, `reboot`/`shutdown`/`halt`, `su`, writes to other apps' `/data/data`
+- Absolute path tokens are collapsed (`.`, `..`, repeated slashes) before that list runs, so `rm -rf /./` and `/data/data/dev.ophoner/../com.other` cannot disguise a blocked target
+- Command-position `su`, `mount`, `umount`, `mkfs`, `reboot`, `shutdown`, `halt`, and `poweroff` are rejected, including after `sudo`, `busybox`, or `env`, and inside `$(...)`, backticks, and `sh -c`. The same words used only as arguments (`echo su`) stay allowed
 - **Allow list (soft):** `ls`, `pwd`, `cat`, `grep`, `find`, `echo`, `which`, `ps`, `cd`, `head`, `tail`, `wc`, `stat`, `df`, `du`, `date`, `uname`, `env`, `printenv`, `whoami` — these get classified `ALLOW(allowlist)`. Commands outside both lists are `ALLOW(unscoped)` and logged
 - **Audit log:** every execution (allowed or rejected) is appended to `getExternalFilesDir(null)/shell_audit.log` with timestamp + outcome + sanitized command
 - When Shizuku is running, shell commands go through it; the policy gate runs **before** both the Shizuku and sandboxed paths

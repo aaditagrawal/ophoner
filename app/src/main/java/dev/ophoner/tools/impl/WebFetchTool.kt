@@ -1,6 +1,7 @@
 package dev.ophoner.tools.impl
 
 import dev.ophoner.BuildConfig
+import dev.ophoner.tools.html.htmlToText
 import dev.ophoner.tools.Tool
 import dev.ophoner.tools.ToolExecutor
 import dev.ophoner.tools.ToolOutputLimits
@@ -49,7 +50,7 @@ class WebFetchTool @Inject constructor(
                 ?: return ToolResult(toolUseId, "Missing required parameter: url", isError = true)
 
             val html = withContext(Dispatchers.IO) { fetchText(url) }
-            val text = stripHtml(html)
+            val text = htmlToText(html)
             ToolResult(
                 toolUseId,
                 ToolOutputLimits.truncateWithNotice(text, ToolOutputLimits.WEB_FETCH_MAX_CHARS, "web_fetch"),
@@ -97,19 +98,6 @@ class WebFetchTool @Inject constructor(
             }
         }
         throw java.io.IOException("too many redirects")
-    }
-
-    private fun stripHtml(html: String): String {
-        return html
-            .replace(Regex("<script[^>]*>.*?</script>", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("<style[^>]*>.*?</style>", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("<[^>]*>"), " ")
-            .replace(Regex("&nbsp;"), " ")
-            .replace(Regex("&amp;"), "&")
-            .replace(Regex("&lt;"), "<")
-            .replace(Regex("&gt;"), ">")
-            .replace(Regex("\\s+"), " ")
-            .trim()
     }
 
     private class RejectedUrlException(message: String) : Exception(message)

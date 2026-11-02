@@ -389,4 +389,71 @@ class AgentLoopTest {
         assertEquals(1, summaries.get())
         assertEquals(AgentStopReason.COMPLETED, events.filterIsInstance<AgentEvent.RunStopped>().single().reason)
     }
+
+    @Test fun `read batches overlap and the following mutation waits`() = runBlocking {
+        ToolBatchTiming.clear()
+        val active = AtomicInteger()
+        val peak = AtomicInteger()
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val requests = AtomicInteger()
+        val agent = loop(setOf(
+            tool(name = "read", policy = ToolPolicy(parallelSafe = true)) { id, _ ->
+                val now = active.incrementAndGet()
+                peak.updateAndGet { maxOf(it, now) }
+                try {
+                    delay(40)
+                    order.add(id)
+                    ToolResult(id, id)
+                } finally {
+                    active.decrementAndGet()
+                }
+            },
+            tool(name = "write") { id, _ ->
+                assertEquals(0, active.get())
+                order.add(id)
+                ToolResult(id, id)
+            },
+        )) { _, _, _ ->
+            if (requests.getAndIncrement() == 0) flow {
+                call("r1", "read")
+                call("r2", "read")
+                call("w", "write")
+                emit(LlmResponseChunk.Done("tool_calls"))
+            } else finished()
+        }
+        withTimeout(5_000) { agent.run(user, config).toList() }
+        assertEquals(2, peak.get())
+        assertEquals(listOf("r1", "r2"), order.take(2).sorted())
+        assertEquals("w", order.last())
+        val samples = ToolBatchTiming.snapshot()
+        assertTrue(samples.any { it.batchSize == 2 && it.nanos > 0L })
+        assertTrue(samples.any { it.name == "write" && it.batchSize == 1 })
+    }
+
+    @Test fun `cancelling a read batch does not start the following mutation`() = runBlocking {
+        val started = AtomicInteger()
+        val requests = AtomicInteger()
+        val agent = loop(setOf(
+            tool(name = "read", policy = ToolPolicy(parallelSafe = true)) { id, _ ->
+                started.incrementAndGet()
+                delay(60_000)
+                ToolResult(id, id)
+            },
+            tool(name = "write") { id, _ ->
+                started.incrementAndGet()
+                ToolResult(id, id)
+            },
+        )) { _, _, _ ->
+            if (requests.getAndIncrement() == 0) flow {
+                call("r", "read")
+                call("w", "write")
+                emit(LlmResponseChunk.Done("tool_calls"))
+            } else finished()
+        }
+        val job = launch { agent.run(user, config).collect { } }
+        withTimeout(3_000) { while (started.get() == 0) delay(10) }
+        job.cancelAndJoin()
+        delay(50)
+        assertEquals(1, started.get())
+    }
 }

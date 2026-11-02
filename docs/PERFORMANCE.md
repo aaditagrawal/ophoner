@@ -83,14 +83,16 @@ adb pull /sdcard/Android/media/dev.ophoner.benchmark.tests/ benchmark-results
 
 The existing `app/src/main/baseline-prof.txt` uses broad handwritten app rules. A device-generated replacement is **not yet collected or validated**. After collecting on a supported device, exclude benchmark-only `PerformanceActivity` rules, review the generated profile, replace the broad rules, and verify release packaging and startup performance. The benchmark uses an unminified target to retain production method names for this step.
 
-## Tool backlog, paused by request
+## Tool paths
 
-1. **File reads, writes, lists, deletes, and moves:** replace `DocumentFile.findFile` and repeated metadata getters with a child cursor projecting document ID, name, MIME type, and size. A flat listing currently requires about four metadata queries per file in addition to enumeration. Target one query per directory and one per path segment. Test provider errors, truncation, external edits, and scope enforcement without retaining stale URI caches.
-2. **Folder skill loading:** reuse the same bulk metadata queries before each request.
-3. **Shell execution:** the original implementation read stdout before stderr and wrapped blocking work in a coroutine timeout. Verify concurrent bounded draining, cancellation, and actual deadlines through both sandbox and Shizuku paths. Another session is replacing this code; reassess that result before changing it.
-4. **File moves:** use provider-supported rename for eligible same-directory moves, preserving overwrite behavior and falling back to copy/delete when necessary.
-5. **Web search/fetch:** reuse compiled HTML patterns and stop parsing search matches after the requested result count. Retain response-size caps and test malformed HTML.
-6. **App listing:** filter before sorting. Any label/package cache needs invalidation for package changes and locale changes.
-7. **Tool scheduling:** measure bounded concurrent read batches and per-tool latency before changing concurrency. Preserve mutation order and cancellation.
+These replaced per-file document lookups, sequential pipe reads, full-page HTML scans, and sort-then-filter app listing.
+
+1. **Files.** `DocumentTree` reads each directory with one child-cursor projection (document id, name, MIME type, size, flags). Path walks cost one query per segment. Pages are indexed in a map for that call and then dropped, so an external edit is visible on the next call. A provider error is not treated as an empty directory. A partial page (`EXTRA_LOADING`, after one bounded refresh) does not create or rename over a name that was not returned. Listings report that partial page as truncated.
+2. **Folder skills.** `SkillLoader` uses the same child queries: one for the tree root, then one for `.ophoner` and one for `skills` when those directories are present.
+3. **Shell.** `CommandRunner` drains stdout and stderr together, closes stdin, and uses `Process.waitFor` for the deadline. Output is capped while the rest of the pipe is still consumed, which is what keeps a 64KiB pipe from stalling the child. `PrivilegedService` delegates to the same runner, so the Shizuku path has the same deadline. Cancellation destroys the process only when the calling coroutine is cancelled.
+4. **Moves.** A same-directory rename uses `DocumentsContract.renameDocument` when the source supports rename and the destination name is free. An existing file is overwritten in place, then the source is deleted. Anything else copies and deletes.
+5. **Web search and fetch.** HTML becomes text in one pass, including script and style bodies, without a backtracking expression. Search results are scanned incrementally and the response body is closed once the requested count is complete. The byte caps remain.
+6. **App listing.** Launcher rows are cached until a package broadcast or a locale change. A query filters that snapshot, then sorts only the matches.
+7. **Tool scheduling.** Reads still run at most four at a time. That width is covered by an overlap test; it was not raised. Mutations stay in their own batches so they cannot pass each other. Cancelling a read batch does not start the following mutation. Recent per-tool latencies are kept in a fixed 64-entry trace.
 
 Follow-up production measurements should use an optimized release build on a phone: long-history opening, scrolling during generation, a large streamed file-write preview, and rapid navigation. Record frame-time percentiles and allocations with the same fixtures before and after.

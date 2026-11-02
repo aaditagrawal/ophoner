@@ -60,11 +60,18 @@ class FileListTool @Inject constructor(
             }
             val text = when {
                 body.isEmpty() -> "(empty directory)"
-                listed.truncated -> ToolOutputLimits.truncateWithNotice(
-                    body + "\n\n[listing truncated at ${ToolOutputLimits.FILE_LIST_MAX_ENTRIES} entries]",
-                    ToolOutputLimits.FILE_LIST_MAX_CHARS,
-                    "file_list",
-                )
+                listed.truncated -> {
+                    val reason = if (listed.files.size >= ToolOutputLimits.FILE_LIST_MAX_ENTRIES) {
+                        "[listing truncated at ${ToolOutputLimits.FILE_LIST_MAX_ENTRIES} entries]"
+                    } else {
+                        "[listing incomplete: the documents provider returned a partial directory]"
+                    }
+                    ToolOutputLimits.truncateWithNotice(
+                        body + "\n\n$reason",
+                        ToolOutputLimits.FILE_LIST_MAX_CHARS,
+                        "file_list",
+                    )
+                }
                 else -> ToolOutputLimits.truncateWithNotice(
                     body,
                     ToolOutputLimits.FILE_LIST_MAX_CHARS,

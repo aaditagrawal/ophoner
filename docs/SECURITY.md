@@ -31,7 +31,7 @@ Provider JSON export includes API keys for backup/move but does **not** include 
   - Null bytes rejected
   - `..` segments are rejected before canonicalization, including backslash-separated segments
   - Absolute paths under `/system`, `/proc`, `/sys`, `/vendor`, `/apex`, `/dev`, or other apps' `/data/data/<pkg>` trees are rejected on both the raw path and the canonical path
-- The underlying `FileAccessManager` uses SAF `DocumentFile` APIs; the OS itself sandboxes writes to the URI tree the user picked
+- The underlying `FileAccessManager` walks the SAF tree with child-document queries; the OS itself sandboxes writes to the URI tree the user picked
 
 ### Web tools
 - `WebFetchTool` rejects non-http(s) schemes (blocks `file://`, `ftp://`, `gopher://`), URL userinfo, control characters, and hosts where `java.net.URI` and OkHttp disagree

@@ -1,6 +1,7 @@
 package dev.ophoner.tools.impl
 
 import dev.ophoner.BuildConfig
+import dev.ophoner.tools.html.SearchResultScanner
 import dev.ophoner.tools.Tool
 import dev.ophoner.tools.ToolExecutor
 import dev.ophoner.tools.ToolResult
@@ -60,45 +61,72 @@ class WebSearchTool @Inject constructor(
                 )
             }
 
+            val maxResults = (arguments["max_results"]?.jsonPrimitive?.int ?: 5).coerceAtLeast(0)
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val request = Request.Builder()
                 .url("$SEARCH_ENDPOINT?q=$encoded")
                 .header("User-Agent", "Ophoner/${BuildConfig.VERSION_NAME}")
                 .build()
 
-            val html = withContext(Dispatchers.IO) {
+            val scanner = SearchResultScanner(maxResults)
+            withContext(Dispatchers.IO) {
                 httpClient.newCall(request).execute().use { response ->
-                    val body = response.body ?: return@withContext ""
-                    // Cap response size to protect the fragile regex parser below
-                    // from pathologically large HTML payloads. We read into a
-                    // ByteArray incrementally and stop at the cap.
-                    val stream = body.byteStream()
+                    val stream = response.body.byteStream()
                     val buf = ByteArray(8 * 1024)
-                    val out = java.io.ByteArrayOutputStream()
+                    val decoder = Charsets.UTF_8.newDecoder()
+                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPLACE)
+                        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPLACE)
+                    val chars = java.nio.CharBuffer.allocate(buf.size)
                     var total = 0
-                    while (total < MAX_HTML_BYTES) {
-                        val remaining = MAX_HTML_BYTES - total
-                        val read = stream.read(buf, 0, minOf(buf.size, remaining))
+                    while (total < MAX_HTML_BYTES && !scanner.satisfied) {
+                        val read = stream.read(buf, 0, minOf(buf.size, MAX_HTML_BYTES - total))
                         if (read <= 0) break
-                        out.write(buf, 0, read)
                         total += read
+                        decodeChunk(decoder, buf, read, chars, endOfInput = false, scanner)
                     }
-                    String(out.toByteArray(), Charsets.UTF_8)
+                    if (!scanner.satisfied) decodeChunk(decoder, buf, 0, chars, endOfInput = true, scanner)
                 }
             }
 
-            val results = parseSearchResults(html)
+            val results = scanner.finish()
             if (results.isEmpty()) {
                 ToolResult(toolUseId, "No results found for: $query")
             } else {
-                val maxResults = arguments["max_results"]?.jsonPrimitive?.int ?: 5
-                val output = results.take(maxResults).mapIndexed { i, (title, url, snippet) ->
-                    "${i + 1}. $title\n   $url\n   $snippet"
+                val output = results.mapIndexed { i, hit ->
+                    "${i + 1}. ${hit.title}\n   ${hit.url}\n   ${hit.snippet}"
                 }.joinToString("\n\n")
                 ToolResult(toolUseId, output)
             }
         } catch (e: Exception) {
             ToolResult(toolUseId, "Error searching: ${e.message}", isError = true)
+        }
+    }
+
+    private fun decodeChunk(
+        decoder: java.nio.charset.CharsetDecoder,
+        buf: ByteArray,
+        length: Int,
+        chars: java.nio.CharBuffer,
+        endOfInput: Boolean,
+        scanner: SearchResultScanner,
+    ) {
+        val bytes = java.nio.ByteBuffer.wrap(buf, 0, length)
+        while (true) {
+            chars.clear()
+            val decoded = decoder.decode(bytes, chars, endOfInput)
+            chars.flip()
+            if (chars.hasRemaining()) scanner.append(chars.toString())
+            if (decoded.isOverflow) continue
+            break
+        }
+        if (!endOfInput) return
+        while (true) {
+            chars.clear()
+            val flushed = decoder.flush(chars)
+            chars.flip()
+            if (chars.hasRemaining()) scanner.append(chars.toString())
+            if (flushed.isOverflow) continue
+            return
         }
     }
 
@@ -116,29 +144,5 @@ class WebSearchTool @Inject constructor(
             return "endpoint host '$host' is not the expected DuckDuckGo host"
         }
         return null
-    }
-
-    private fun parseSearchResults(html: String): List<Triple<String, String, String>> {
-        val results = mutableListOf<Triple<String, String, String>>()
-        val linkRegex = Regex("""<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
-        val snippetRegex = Regex("""<a[^>]*class="result__snippet"[^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
-
-        val links = linkRegex.findAll(html).toList()
-        val snippets = snippetRegex.findAll(html).toList()
-
-        for (i in links.indices) {
-            val url = links[i].groupValues[1].let { rawUrl ->
-                Regex("""uddg=([^&]*)""").find(rawUrl)?.groupValues?.get(1)?.let {
-                    java.net.URLDecoder.decode(it, "UTF-8")
-                } ?: rawUrl
-            }
-            val title = links[i].groupValues[2].replace(Regex("<[^>]*>"), "").trim()
-            val snippet = snippets.getOrNull(i)?.groupValues?.get(1)
-                ?.replace(Regex("<[^>]*>"), "")?.trim() ?: ""
-            if (title.isNotEmpty()) {
-                results.add(Triple(title, url, snippet))
-            }
-        }
-        return results
     }
 }

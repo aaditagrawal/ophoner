@@ -29,8 +29,15 @@ class SandboxedShell @Inject constructor(private val access: DeviceAccess, priva
     suspend fun execute(command: String, timeoutMs: Long = 30_000, workingDir: File? = null): ShellResult {
         if (isShizukuAvailable()) return executePrivileged(command, timeoutMs)
         return execution.withLock { coroutineScope {
+            val parent = coroutineContext.job
             val cancellation = launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
-                try { awaitCancellation() } finally { runner.cancelAll() }
+                try {
+                    awaitCancellation()
+                } finally {
+                    // Success cancels this watcher while the parent is still active.
+                    // Destroy the process only when the caller itself was cancelled.
+                    if (!parent.isActive) runner.cancelAll()
+                }
             }
             try {
                 val result = withContext(Dispatchers.IO) { runner.execute(command, timeoutMs, workingDir) }

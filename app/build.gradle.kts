@@ -122,7 +122,6 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.navigation.compose)
     implementation(libs.datastore.preferences)
-    implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.security:security-crypto:1.1.0")
 
     // Room

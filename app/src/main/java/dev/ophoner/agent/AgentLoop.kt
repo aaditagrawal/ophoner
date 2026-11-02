@@ -164,31 +164,34 @@ class AgentLoop @Inject constructor(
             }
 
             val results = linkedMapOf<String, ToolResult>()
-            var index = 0
-            while (index < calls.size) {
+            val batches = planToolBatches(calls, MAX_PARALLEL_TOOLS) { call ->
+                turnRegistry.getExecutor(call.name)?.definition?.policy?.parallelSafe == true
+            }
+            for (batch in batches) {
                 control?.awaitReady()
-                val first = calls[index]
-                if (turnRegistry.getExecutor(first.name)?.definition?.policy?.parallelSafe == true) {
-                    val batch = mutableListOf<LlmContentBlock.ToolUse>()
-                    while (index < calls.size && batch.size < MAX_PARALLEL_TOOLS &&
-                        turnRegistry.getExecutor(calls[index].name)?.definition?.policy?.parallelSafe == true) {
-                        batch.add(calls[index++])
-                    }
-                    for (call in batch) beforeTool(call, durable)
+                if (batch.parallel) {
+                    for (call in batch.calls) beforeTool(call, durable)
                     // Publish each result immediately; one slow read cannot hold back the other results.
                     channelFlow {
-                        for (call in batch) launch { send(call to executeTool(call, turnRegistry, control, actionGeneration)) }
+                        for (call in batch.calls) launch {
+                            val started = System.nanoTime()
+                            val result = executeTool(call, turnRegistry, control, actionGeneration)
+                            ToolBatchTiming.record(call.name, System.nanoTime() - started, batch.calls.size)
+                            send(call to result)
+                        }
                     }.collect { (call, result) ->
                         afterTool(call, result, durable)
                         results[call.id] = result
                     }
                 } else {
-                    index++
-                    if (turnRegistry.getExecutor(first.name)?.definition?.policy?.ownsPhoneUi == true) acquireUi()
-                    beforeTool(first, durable)
-                    val result = executeTool(first, turnRegistry, control, actionGeneration)
-                    afterTool(first, result, durable)
-                    results[first.id] = result
+                    val call = batch.calls.single()
+                    if (turnRegistry.getExecutor(call.name)?.definition?.policy?.ownsPhoneUi == true) acquireUi()
+                    beforeTool(call, durable)
+                    val started = System.nanoTime()
+                    val result = executeTool(call, turnRegistry, control, actionGeneration)
+                    ToolBatchTiming.record(call.name, System.nanoTime() - started, 1)
+                    afterTool(call, result, durable)
+                    results[call.id] = result
                 }
             }
             // Keep protocol order stable regardless of parallel completion order.

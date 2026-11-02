@@ -18,7 +18,7 @@ class FileMoveTool @Inject constructor(
 ) : ToolExecutor {
     override val definition = Tool(
         name = "file_move",
-        description = "Move or rename a file within the working directory (copy then delete source)",
+        description = "Move or rename a file within the working directory. Same-directory renames use the documents provider when it supports rename; otherwise the file is copied and the source is deleted.",
         parameters = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {

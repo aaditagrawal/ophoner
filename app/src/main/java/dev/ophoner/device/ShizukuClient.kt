@@ -46,9 +46,15 @@ class ShizukuClient @Inject constructor(private val access: DeviceAccess) {
         access.requireEnabled(DeviceCapability.SHIZUKU)
         val service = connect()
         coroutineScope {
+            val parent = coroutineContext.job
             // Binder calls block, so send cancellation through a separate transaction.
+            // The remote process uses the same CommandRunner deadlines as the sandbox.
             val cancellation = launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
-                try { awaitCancellation() } finally { if (!currentCoroutineContext().isActive) runCatching { service.cancelAll() } }
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (!parent.isActive) runCatching { service.cancelAll() }
+                }
             }
             try { withContext(Dispatchers.IO) { service.execute(command, timeoutMs.coerceIn(100, 120_000)) } }
             finally { withContext(NonCancellable) { cancellation.cancelAndJoin() } }

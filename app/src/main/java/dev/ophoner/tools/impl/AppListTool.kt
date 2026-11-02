@@ -1,7 +1,9 @@
 package dev.ophoner.tools.impl
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import dev.ophoner.tools.Tool
@@ -26,6 +28,27 @@ import javax.inject.Inject
 class AppListTool @Inject constructor(
     private val context: Context,
 ) : ToolExecutor {
+    private val catalog = LaunchableAppCache(
+        locale = { context.resources.configuration.locales[0].toLanguageTag() },
+        load = ::loadLaunchable,
+    )
+    private val invalidation = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            catalog.invalidate()
+        }
+    }
+
+    init {
+        val packages = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        register(packages)
+        register(IntentFilter(Intent.ACTION_LOCALE_CHANGED))
+    }
 
     override val definition = Tool(
         name = "app_list",
@@ -56,47 +79,17 @@ class AppListTool @Inject constructor(
 
         return withContext(Dispatchers.IO) {
             try {
-                val pm = context.packageManager
-                val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                }
-                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    PackageManager.MATCH_ALL
-                } else {
-                    0
-                }
-                @Suppress("DEPRECATION")
-                val resolveInfos = pm.queryIntentActivities(launcherIntent, flags)
-
-                val apps = resolveInfos.mapNotNull { ri ->
-                    val activityInfo = ri.activityInfo ?: return@mapNotNull null
-                    val packageName = activityInfo.packageName
-                    val activityName = activityInfo.name
-                    val label = ri.loadLabel(pm)?.toString()?.ifBlank { packageName } ?: packageName
-                    AppEntry(label = label, packageName = packageName, activity = activityName)
-                }
-                    .distinctBy { "${it.packageName}/${it.activity}" }
-                    .sortedBy { it.label.lowercase() }
-                    .let { list ->
-                        if (query.isEmpty()) list
-                        else list.filter {
-                            it.label.lowercase().contains(query) ||
-                                it.packageName.lowercase().contains(query)
-                        }
-                    }
-
-                val total = apps.size
-                val truncated = apps.take(limit)
+                val page = selectLaunchableApps(catalog.snapshot(), query, limit)
                 val body = buildString {
-                    appendLine("Launchable apps: showing ${truncated.size} of $total")
+                    appendLine("Launchable apps: showing ${page.shown.size} of ${page.total}")
                     if (query.isNotEmpty()) appendLine("Filter: \"$query\"")
                     appendLine()
-                    for (app in truncated) {
-                        appendLine("${app.label}")
+                    for (app in page.shown) {
+                        appendLine(app.label)
                         appendLine("  package: ${app.packageName}")
                         appendLine("  activity: ${app.activity}")
                     }
-                    if (total > limit) {
+                    if (page.total > limit) {
                         appendLine()
                         append("[truncated to $limit apps; pass a higher limit or a query filter]")
                     }
@@ -113,11 +106,31 @@ class AppListTool @Inject constructor(
         }
     }
 
-    private data class AppEntry(
-        val label: String,
-        val packageName: String,
-        val activity: String,
-    )
+    private fun loadLaunchable(): List<LaunchableApp> {
+        val pm = context.packageManager
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        @Suppress("DEPRECATION")
+        val resolveInfos = pm.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
+        val seen = HashSet<String>(resolveInfos.size)
+        val apps = ArrayList<LaunchableApp>(resolveInfos.size)
+        for (info in resolveInfos) {
+            val activityInfo = info.activityInfo ?: continue
+            if (!seen.add(activityInfo.packageName + "/" + activityInfo.name)) continue
+            val label = info.loadLabel(pm).toString().ifBlank { activityInfo.packageName }
+            apps.add(LaunchableApp(label, activityInfo.packageName, activityInfo.name))
+        }
+        return apps
+    }
+
+    private fun register(filter: IntentFilter) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(invalidation, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(invalidation, filter)
+        }
+    }
 
     companion object {
         private const val DEFAULT_LIMIT = 200

@@ -1,6 +1,7 @@
 package dev.ophoner.tools.impl
 
 import dev.ophoner.BuildConfig
+import dev.ophoner.tools.html.htmlToText
 import dev.ophoner.tools.Tool
 import dev.ophoner.tools.ToolExecutor
 import dev.ophoner.tools.ToolOutputLimits
@@ -76,7 +77,7 @@ class WebFetchTool @Inject constructor(
                 }
             }
 
-            val text = stripHtml(html)
+            val text = htmlToText(html)
             ToolResult(
                 toolUseId,
                 ToolOutputLimits.truncateWithNotice(text, ToolOutputLimits.WEB_FETCH_MAX_CHARS, "web_fetch"),
@@ -84,19 +85,6 @@ class WebFetchTool @Inject constructor(
         } catch (e: Exception) {
             ToolResult(toolUseId, "Error fetching URL: ${e.message}", isError = true)
         }
-    }
-
-    private fun stripHtml(html: String): String {
-        return html
-            .replace(Regex("<script[^>]*>.*?</script>", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("<style[^>]*>.*?</style>", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("<[^>]*>"), " ")
-            .replace(Regex("&nbsp;"), " ")
-            .replace(Regex("&amp;"), "&")
-            .replace(Regex("&lt;"), "<")
-            .replace(Regex("&gt;"), ">")
-            .replace(Regex("\\s+"), " ")
-            .trim()
     }
 
     /**

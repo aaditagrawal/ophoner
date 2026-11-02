@@ -42,4 +42,21 @@ class WebFetchToolTest {
         assertFalse(result.isError)
         assertTrue(result.output.contains("Example"))
     }
+
+    @Test
+    fun scriptsAndBrokenMarkupDoNotLeakOrThrow() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body("<script>secret</script><p>Visible</p><".toResponseBody())
+                .build()
+        }.build()
+        val result = WebFetchTool(client).execute("fetch", buildJsonObject { put("url", "https://8.8.8.8/example") })
+        assertFalse(result.isError)
+        assertTrue(result.output.contains("Visible"))
+        assertFalse(result.output.contains("secret"))
+    }
 }

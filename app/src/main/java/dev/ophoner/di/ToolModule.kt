@@ -25,6 +25,8 @@ import dev.ophoner.tools.impl.IntentLaunchTool
 import dev.ophoner.tools.impl.ShellExecuteTool
 import dev.ophoner.tools.impl.WebFetchTool
 import dev.ophoner.tools.impl.WebSearchTool
+import dev.ophoner.tools.sandbox.AndroidDocumentTree
+import dev.ophoner.tools.sandbox.DocumentTree
 import dev.ophoner.tools.sandbox.FileAccessManager
 import dev.ophoner.tools.sandbox.SandboxedShell
 import okhttp3.OkHttpClient
@@ -33,6 +35,10 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object ToolModule {
+
+    @Provides
+    @Singleton
+    fun provideDocumentTree(tree: AndroidDocumentTree): DocumentTree = tree
 
     @Provides
     @Singleton

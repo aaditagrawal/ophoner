@@ -46,7 +46,7 @@ class FileWriteTool @Inject constructor(
                 ?: return ToolResult(toolUseId, "Missing required parameter: content", isError = true)
 
             // Defense-in-depth: validate path before handing off to FileAccessManager.
-            // FileAccessManager already scopes writes to a user-selected DocumentFile
+            // FileAccessManager already scopes writes to the user-selected document
             // tree via SAF, but we reject obviously dangerous inputs early.
             validatePath(path)?.let { reason ->
                 return ToolResult(

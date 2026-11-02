@@ -87,7 +87,7 @@ class FileReadTool @Inject constructor(
 /**
  * Defense-in-depth path validation layered on top of FileAccessManager.
  * FileAccessManager resolves paths as relative segments under a user-selected
- * DocumentFile tree, so traversal outside the tree is already blocked by the
+ * document tree, so traversal outside the tree is already blocked by the
  * SAF URI sandbox. These checks add a fast-fail layer against obviously bad
  * inputs before we reach the content resolver.
  *

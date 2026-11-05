@@ -102,14 +102,16 @@ dependencies {
     testImplementation("io.mockk:mockk:1.14.11")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.coroutines.get()}")
 
+    constraints {
+        // Material 3 still uses shapes; preserve its previously resolved version.
+        implementation("androidx.graphics:graphics-shapes:1.1.0")
+    }
+
     // Compose
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.graphics)
-    implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
-    implementation(libs.compose.material.icons)
-    implementation(libs.graphics.shapes)
     implementation(libs.haze)
     implementation(libs.haze.blur)
     debugImplementation(libs.compose.ui.tooling)
@@ -127,7 +129,6 @@ dependencies {
 
     // Room
     implementation(libs.room.runtime)
-    implementation(libs.room.ktx)
     ksp(libs.room.compiler)
 
     // Hilt
@@ -137,7 +138,6 @@ dependencies {
 
     // Network
     implementation(libs.okhttp)
-    implementation(libs.okhttp.sse)
 
     // Kotlin
     implementation(libs.kotlinx.coroutines)

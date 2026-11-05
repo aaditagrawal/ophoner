@@ -8,7 +8,6 @@ compose-bom = "2026.09.00"
 # are marked `internal` in material3 1.4.x stable and only exposed from 1.5.x alphas.
 # Bump in lockstep once Expressive ships as stable.
 material3 = "1.5.0-alpha25"
-graphics-shapes = "1.1.0"
 hilt = "2.60.1"
 hilt-navigation-compose = "1.4.0"
 room = "2.8.5"
@@ -30,11 +29,8 @@ haze-blur = { group = "dev.chrisbanes.haze", name = "haze-blur", version.ref = "
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
 compose-ui = { group = "androidx.compose.ui", name = "ui" }
 compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
-compose-material-icons = { group = "androidx.compose.material", name = "material-icons-extended" }
-graphics-shapes = { group = "androidx.graphics", name = "graphics-shapes", version.ref = "graphics-shapes" }
 
 # AndroidX
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
@@ -46,7 +42,6 @@ datastore-preferences = { group = "androidx.datastore", name = "datastore-prefer
 
 # Room
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 
 # Hilt
@@ -56,7 +51,6 @@ hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-com
 
 # Network
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
-okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
 
 # Kotlin
 kotlinx-coroutines = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }

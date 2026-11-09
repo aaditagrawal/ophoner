@@ -2,12 +2,8 @@ package dev.ophoner.ui.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import dev.ophoner.ui.theme.Motion
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -99,29 +95,31 @@ fun Mascot(
     // Natural blinking: irregular gaps, occasionally a double blink. Only runs when asked,
     // so static mascots in long chat lists cost nothing per frame.
     val eyeOpen = remember { Animatable(1f) }
-    if (blink) {
-        LaunchedEffect(Unit) {
-            while (true) {
-                delay(Random.nextLong(2_200, 5_200))
-                repeat(if (Random.nextFloat() < 0.22f) 2 else 1) {
-                    eyeOpen.animateTo(0.08f, tween(70))
-                    eyeOpen.animateTo(1f, tween(120))
-                    delay(90)
-                }
+    LaunchedEffect(blink) {
+        if (!blink) {
+            eyeOpen.animateTo(1f, Motion.spec(Motion.BlinkOpen))
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            delay(Random.nextLong(2_200, 5_200))
+            repeat(if (Random.nextFloat() < 0.22f) 2 else 1) {
+                eyeOpen.animateTo(0.08f, Motion.spec(Motion.BlinkClose, Motion.Press))
+                eyeOpen.animateTo(1f, Motion.spec(Motion.BlinkOpen))
+                delay(90)
             }
         }
     }
 
-    val squash = if (bounce) {
-        val transition = rememberInfiniteTransition(label = "mascot-bounce")
-        transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(520, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "squash",
-        ).value
-    } else {
-        0f
+    val squash = remember { Animatable(0f) }
+    LaunchedEffect(bounce) {
+        if (!bounce) {
+            squash.snapTo(0f)
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            squash.animateTo(1f, Motion.spec(Motion.HopLand))
+            squash.animateTo(0f, Motion.spec(Motion.HopLaunch, Motion.Press))
+        }
     }
 
     Box(
@@ -138,10 +136,11 @@ fun Mascot(
                 .then(
                     if (bounce) {
                         Modifier.graphicsLayer {
+                            val amount = squash.value
                             // Squash on landing, stretch at the top of the hop.
-                            scaleX = 1f + 0.05f * squash
-                            scaleY = 1f - 0.06f * squash
-                            translationY = -this.size.height * 0.06f * (1f - squash)
+                            scaleX = 1f + 0.05f * amount
+                            scaleY = 1f - 0.06f * amount
+                            translationY = -this.size.height * 0.06f * (1f - amount)
                             transformOrigin = TransformOrigin(0.5f, 1f)
                         }
                     } else {

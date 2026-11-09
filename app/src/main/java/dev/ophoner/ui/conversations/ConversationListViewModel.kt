@@ -38,15 +38,19 @@ class ConversationListViewModel @Inject constructor(
         }
     }
 
-    fun pinFolder(uri: String, name: String) {
+    fun pinFolder(uri: String, name: String, onDone: () -> Unit) {
         viewModelScope.launch {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    Uri.parse(uri),
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
+            try {
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        Uri.parse(uri),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    )
+                }
+                settingsRepository.pinFolder(uri, name)
+            } finally {
+                onDone()
             }
-            settingsRepository.pinFolder(uri, name)
         }
     }
 

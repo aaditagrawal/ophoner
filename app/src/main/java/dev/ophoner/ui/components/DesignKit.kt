@@ -3,7 +3,7 @@ package dev.ophoner.ui.components
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import dev.ophoner.ui.theme.Motion
 import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -102,7 +102,7 @@ private class FadeIndicationNode(
                 launch {
                     alpha.animateTo(
                         targetValue = if (pressed) 0.55f else 1f,
-                        animationSpec = tween(durationMillis = if (pressed) 60 else 160),
+                        animationSpec = if (pressed) Motion.pressIn() else Motion.pressOut(),
                     ) { invalidateDraw() }
                 }
             }
@@ -291,18 +291,23 @@ fun StatusBarScrim(modifier: Modifier = Modifier, visible: Boolean = true) {
     val fade = 28.dp
     val total = statusBar + fade
     val solidStop = if (total.value > 0f) statusBar / total else 0f
-    val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(300), label = "scrim")
+    val alpha = animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = Motion.spec(Motion.Standard),
+        label = "scrim",
+    )
+    val brush = remember(t.background, solidStop) {
+        Brush.verticalGradient(
+            0f to t.background,
+            solidStop to t.background.copy(alpha = 0.94f),
+            1f to Color.Transparent,
+        )
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(total)
-            .graphicsLayer { this.alpha = alpha }
-            .background(
-                Brush.verticalGradient(
-                    0f to t.background,
-                    solidStop to t.background.copy(alpha = 0.94f),
-                    1f to Color.Transparent,
-                ),
-            ),
+            .graphicsLayer { this.alpha = alpha.value }
+            .background(brush),
     )
 }

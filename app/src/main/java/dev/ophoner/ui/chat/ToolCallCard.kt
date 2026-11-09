@@ -2,7 +2,9 @@ package dev.ophoner.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.graphicsLayer
+import dev.ophoner.ui.theme.Motion
+import dev.ophoner.ui.theme.SnappyProgressIndicator
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -19,7 +21,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -76,12 +76,15 @@ fun ToolCallCard(
     }
     val hasDetails = (arguments.isNotEmpty() && arguments != "{}") || result != null
 
-    val status = when {
-        isExecuting -> "Running…"
-        isError -> "Failed"
-        else -> null
+    val phase = toolCardPhase(isExecuting, result, isError)
+    val status = when (phase) {
+        ToolCardPhase.Running -> "Running…"
+        is ToolCardPhase.Finished -> if (phase.error) "Failed" else null
+        ToolCardPhase.Receiving -> null
     }
-    val subtitle = listOfNotNull(status, preview).joinToString(" · ").ifEmpty { "Done" }
+    val subtitle = listOfNotNull(status, preview).joinToString(" · ").ifEmpty {
+        if (phase is ToolCardPhase.Receiving) "Preparing…" else "Done"
+    }
 
     Column(
         modifier = Modifier
@@ -145,15 +148,15 @@ fun ToolCallCard(
             }
             if (isExecuting && !mascot) {
                 Spacer(Modifier.width(8.dp))
-                LoadingIndicator(
+                SnappyProgressIndicator(
                     modifier = Modifier.size(18.dp),
                     color = t.accent,
                 )
             } else if (hasDetails && !isExecuting) {
                 Spacer(Modifier.width(8.dp))
-                val rotation by animateFloatAsState(
+                val rotation = animateFloatAsState(
                     targetValue = if (expanded) 180f else 0f,
-                    animationSpec = spring(stiffness = 600f),
+                    animationSpec = Motion.spec(Motion.Fast),
                     label = "tool-chevron",
                 )
                 LucideIcon(
@@ -161,15 +164,15 @@ fun ToolCallCard(
                     contentDescription = null,
                     tint = t.mutedIcon,
                     size = 17.dp,
-                    modifier = Modifier.rotate(rotation),
+                    modifier = Modifier.graphicsLayer { rotationZ = rotation.value },
                 )
             }
         }
 
         AnimatedVisibility(
-            visible = expanded,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
+            visible = expanded && phase is ToolCardPhase.Finished,
+            enter = expandVertically(Motion.spec(Motion.Standard)) + fadeIn(Motion.spec(Motion.Fast)),
+            exit = shrinkVertically(Motion.spec(Motion.Fast)) + fadeOut(Motion.spec(Motion.PressOut)),
         ) {
             Column(
                 modifier = Modifier
@@ -352,9 +355,9 @@ fun ToolCallGroup(calls: List<ToolCallEntry>) {
                 )
             }
             Spacer(Modifier.width(8.dp))
-            val rotation by animateFloatAsState(
+            val rotation = animateFloatAsState(
                 targetValue = if (expanded) 180f else 0f,
-                animationSpec = spring(stiffness = 600f),
+                animationSpec = Motion.spec(Motion.Fast),
                 label = "group-chevron",
             )
             LucideIcon(
@@ -362,14 +365,14 @@ fun ToolCallGroup(calls: List<ToolCallEntry>) {
                 contentDescription = null,
                 tint = t.mutedIcon,
                 size = 17.dp,
-                modifier = Modifier.rotate(rotation),
+                modifier = Modifier.graphicsLayer { rotationZ = rotation.value },
             )
         }
 
         AnimatedVisibility(
             visible = expanded,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
+            enter = expandVertically(Motion.spec(Motion.Standard)) + fadeIn(Motion.spec(Motion.Fast)),
+            exit = shrinkVertically(Motion.spec(Motion.Fast)) + fadeOut(Motion.spec(Motion.PressOut)),
         ) {
             Column(
                 modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),

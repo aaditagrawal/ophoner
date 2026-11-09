@@ -15,6 +15,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ophoner.data.model.ProviderConfig
 import dev.ophoner.ui.components.Lucide
 import dev.ophoner.ui.components.LucideIcon
+import dev.ophoner.ui.theme.SnappyLinearProgress
 import dev.ophoner.ui.theme.tokens
 
 /** The composer owns model selection; connection settings only own credentials. */
@@ -110,7 +111,7 @@ fun ModelPicker(
                                 enabled = !state.selecting,
                                 onClick = { choose(provider.id, null) },
                             )
-                            if (provider.id in state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                            if (provider.id in state.loading) SnappyLinearProgress(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
                             val message = state.errors[provider.id] ?: state.catalogs[provider.id]?.warning
                             message?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp)) }
                         }

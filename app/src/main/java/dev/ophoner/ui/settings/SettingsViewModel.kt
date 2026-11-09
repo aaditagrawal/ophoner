@@ -46,6 +46,21 @@ data class DeviceLoginUi(
     val expiresAtEpochMs: Long? = null,
 )
 
+/** The dialog's spinner copy. Busy and error stay orthogonal; this is only the in-flight phase. */
+sealed interface DeviceLoginPhase {
+    data object RequestingCode : DeviceLoginPhase
+    data object WaitingForNetwork : DeviceLoginPhase
+    data object AwaitingApproval : DeviceLoginPhase
+    data object Saving : DeviceLoginPhase
+}
+
+fun DeviceLoginUi.phase(): DeviceLoginPhase = when {
+    saving -> DeviceLoginPhase.Saving
+    networkStatus != null -> DeviceLoginPhase.WaitingForNetwork
+    userCode.isBlank() -> DeviceLoginPhase.RequestingCode
+    else -> DeviceLoginPhase.AwaitingApproval
+}
+
 data class SettingsUiState(
     val providers: List<ProviderConfig> = emptyList(),
     val activeProviderId: String? = null,

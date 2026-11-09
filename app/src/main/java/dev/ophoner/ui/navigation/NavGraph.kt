@@ -30,9 +30,27 @@ fun OphoneNavGraph(navController: NavHostController) {
         navController = navController,
         startDestination = Routes.CHAT,
     ) {
-        composable(Routes.DEVICE_SETUP) { DeviceSetupScreen(onBack = { navController.popBackStack() }) }
-        composable(Routes.SHIZUKU_SETUP) { DeviceSetupScreen(onBack = { navController.popBackStack() }, shizukuOnly = true) }
-        composable(Routes.CAPABILITIES) {
+        composable(
+            Routes.DEVICE_SETUP,
+            enterTransition = { pageEnter() },
+            exitTransition = { pageExit() },
+            popEnterTransition = { pagePopEnter() },
+            popExitTransition = { pagePopExit() },
+        ) { DeviceSetupScreen(onBack = { navController.popBackStack() }) }
+        composable(
+            Routes.SHIZUKU_SETUP,
+            enterTransition = { pageEnter() },
+            exitTransition = { pageExit() },
+            popEnterTransition = { pagePopEnter() },
+            popExitTransition = { pagePopExit() },
+        ) { DeviceSetupScreen(onBack = { navController.popBackStack() }, shizukuOnly = true) }
+        composable(
+            Routes.CAPABILITIES,
+            enterTransition = { pageEnter() },
+            exitTransition = { pageExit() },
+            popEnterTransition = { pagePopEnter() },
+            popExitTransition = { pagePopExit() },
+        ) {
             CapabilitiesScreen(onBack = { navController.popBackStack() },
                 onOpenSetup = { navController.navigate(Routes.DEVICE_SETUP) },
                 onOpenShizuku = { navController.navigate(Routes.SHIZUKU_SETUP) })

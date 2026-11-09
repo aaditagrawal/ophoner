@@ -1,5 +1,7 @@
 package dev.ophoner.tools.impl
 
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
@@ -69,6 +71,89 @@ class ShellPolicyTest {
                 repeat(random.nextInt(48)) { append(alphabet[random.nextInt(alphabet.length)]) }
             }
             ShellPolicy.classify(command)
+            assertEquals(legacyDeny(command), ShellDenyScan.deny(command))
         }
     }
+
+    @Test fun denyScanMatchesTheOldExpressions() {
+        val cases = listOf(
+            "rm -rf /",
+            "rm -fr /",
+            "rm -RF /",
+            "rm -rf2 /",
+            "rm -fr /*",
+            "rm -rf /*",
+            "rm -rf -- /",
+            "rm -rf /tmp",
+            "echo halt",
+            "echo su",
+            "echo poweroff",
+            "chmod 777 /",
+            "chmod 777 /tmp",
+            "chmod -R 777 /",
+            "chmod -R 777 /tmp",
+            "dd if=/dev/zero of=x",
+            "dd of=x",
+            "dd | if=/dev/zero",
+            "cat /data/data/com.other/secret",
+            "cat /data/data/dev.ophoner/files",
+            "cat /data/data/dev.ophoner.debug/files",
+            "cat /data/data/dev.ophoner.debug.extra",
+            "cat /data/user/0/com.other/a",
+            "cat /data/user/0/dev.ophoner/a",
+            "echo>/system/build.prop",
+            " >/system/build.prop",
+            ">>/system/build.prop",
+            "tee /system/bin/x",
+            "mkfs.ext4 /dev/block",
+            ":(){ :|:& };:",
+            "reboot",
+            "rebooted",
+            "su -",
+            "sudo ls",
+        )
+        for (command in cases) {
+            assertEquals(command, legacyDeny(command), ShellDenyScan.deny(command))
+        }
+        assertNull(ShellDenyScan.deny("echo hello"))
+    }
+
+    @Test fun longMissesStayLinear() {
+        val started = System.nanoTime()
+        assertNull(ShellDenyScan.deny("rm -" + "r".repeat(20_000) + " /"))
+        assertNull(ShellDenyScan.deny("rm -" + "rf".repeat(800) + " /x"))
+        assertNull(ShellDenyScan.deny("dd ".repeat(20_000)))
+        assertTrue(System.nanoTime() - started < 500_000_000L)
+    }
+}
+
+private val LEGACY_DENY = listOf(
+    Regex("""\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+/(\s|$)""") to "rm -rf targeting /",
+    Regex("""\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+--\s+/(\s|$)""") to "rm -rf targeting /",
+    Regex("""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/\*""") to "rm -rf targeting /*",
+    Regex("""\bmkfs(\.|\s)""") to "mkfs (filesystem format)",
+    Regex("""\bdd\s+[^|]*\bif=""") to "dd with input file",
+    Regex(""":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:""") to "fork bomb",
+    Regex("""\bchmod\s+(-[a-zA-Z]*\s+)?777\s+/(\s|$)""") to "chmod 777 on /",
+    Regex("""\bchmod\s+-R\s+777\s+/""") to "recursive chmod 777 on /",
+    Regex("""(^|[\s;&|`])>\s*/system/""") to "write into /system",
+    Regex("""(^|[\s;&|`])>>\s*/system/""") to "append into /system",
+    Regex("""\btee\s+(-[a-zA-Z]+\s+)?/system/""") to "tee into /system",
+    Regex("""\bmount\s+""") to "mount operation",
+    Regex("""\bumount\s+""") to "umount operation",
+    Regex("""\breboot\b""") to "reboot",
+    Regex("""\bshutdown\b""") to "shutdown",
+    Regex("""\bhalt\b""") to "halt",
+    Regex("""\bsu\s+(-|\w+)?""") to "privilege escalation (su)",
+    Regex("""(^|[\s;&|`>])(>|>>|tee\s+\S*\s+)?/data/data/(?!dev\.ophoner(\.debug)?(/|$))""") to
+        "access to another app's /data/data",
+    Regex("""(^|[\s;&|`>])(>|>>|tee\s+\S*\s+)?/data/user/\d+/(?!dev\.ophoner(\.debug)?(/|$))""") to
+        "access to another app's /data/user",
+)
+
+private fun legacyDeny(command: String): String? {
+    for ((pattern, reason) in LEGACY_DENY) {
+        if (pattern.containsMatchIn(command)) return reason
+    }
+    return null
 }

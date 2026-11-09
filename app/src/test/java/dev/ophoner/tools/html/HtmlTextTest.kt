@@ -14,6 +14,14 @@ class HtmlTextTest {
         assertEquals("a<b", htmlToText("a<b"))
     }
 
+    @Test fun unclosedMarkupStaysLinear() {
+        val started = System.nanoTime()
+        assertEquals("<".repeat(8_000), htmlToText("<".repeat(8_000)))
+        val scripts = htmlToText("<script>".repeat(400) + "tail")
+        assertTrue(scripts.contains("tail"))
+        assertTrue(System.nanoTime() - started < 500_000_000L)
+    }
+
     @Test fun unclosedScriptDoesNotScanQuadratically() {
         val started = System.nanoTime()
         val text = htmlToText("<script>" + "x".repeat(80_000))

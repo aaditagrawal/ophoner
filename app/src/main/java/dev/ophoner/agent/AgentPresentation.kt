@@ -19,7 +19,11 @@ fun AgentRunState.statusLabel(): String = when {
     retryAttempt > 0 -> "Reconnecting · attempt $retryAttempt"
     activeToolCalls.any { it.isExecuting } -> {
         val tool = activeToolCalls.first { it.isExecuting }
-        val action = runCatching { Json.parseToJsonElement(tool.arguments).jsonObject["action"]?.jsonPrimitive?.content }.getOrNull()
+        val action = if (tool.name == "screen_control") {
+            runCatching { Json.parseToJsonElement(tool.arguments).jsonObject["action"]?.jsonPrimitive?.content }.getOrNull()
+        } else {
+            null
+        }
         when (tool.name) {
             "screen_control" -> when (action) {
                 "read" -> "Reading the screen"

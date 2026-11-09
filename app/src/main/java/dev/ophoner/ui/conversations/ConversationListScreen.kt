@@ -6,7 +6,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
@@ -45,7 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import dev.ophoner.ui.theme.Motion
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,8 +97,9 @@ fun ConversationListScreen(
     ) { uri ->
         uri?.let {
             val name = it.lastPathSegment?.replace("primary:", "/") ?: "folder"
-            viewModel.pinFolder(it.toString(), name)
-            onNewFolderConversation(it.toString(), name)
+            viewModel.pinFolder(it.toString(), name) {
+                onNewFolderConversation(it.toString(), name)
+            }
         }
     }
 
@@ -270,9 +271,9 @@ private fun FolderRow(
     onRemove: () -> Unit,
 ) {
     val t = tokens()
-    val rotation by animateFloatAsState(
+    val rotation = animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = Motion.spec(Motion.Fast),
         label = "folder-chevron",
     )
     var confirmRemove by rememberSaveable(name) { mutableStateOf(false) }
@@ -325,7 +326,7 @@ private fun FolderRow(
             contentDescription = null,
             tint = t.mutedIcon,
             size = 18.dp,
-            modifier = Modifier.rotate(rotation),
+            modifier = Modifier.graphicsLayer { rotationZ = rotation.value },
         )
     }
 }

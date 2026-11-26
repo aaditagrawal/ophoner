@@ -99,7 +99,7 @@ ksp {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("io.mockk:mockk:1.14.12")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.coroutines.get()}")
 
     // Compose

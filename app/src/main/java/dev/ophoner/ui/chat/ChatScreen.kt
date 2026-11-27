@@ -6,11 +6,8 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.toggleable
@@ -42,7 +39,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.LoadingIndicator
+import dev.ophoner.ui.theme.Motion
+import dev.ophoner.ui.theme.SnappyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
@@ -189,11 +187,6 @@ fun ChatScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshProvider() }
 
     val isEmpty = uiState.conversationId == null && uiState.messages.isEmpty() && !uiState.isAgentRunning
-    val gradientAlpha by animateFloatAsState(
-        targetValue = if (isEmpty) 1f else 0f,
-        animationSpec = tween(durationMillis = 420),
-        label = "start-gradient",
-    )
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val composerHeight = with(density) { composerHeightPx.toDp() }
     val prefs = LocalUiPrefs.current
@@ -210,19 +203,8 @@ fun ChatScreen(
                     .fillMaxSize()
                     .glassSource(glass),
             ) {
-                if (gradientAlpha > 0f && prefs.homeBackground == HomeBackground.GRADIENT) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer { alpha = gradientAlpha }
-                            .background(
-                                Brush.linearGradient(
-                                    colorStops = StartGradientStops.zip(t.startGradient).toTypedArray(),
-                                    start = Offset.Zero,
-                                    end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-                                ),
-                            ),
-                    )
+                if (prefs.homeBackground == HomeBackground.GRADIENT) {
+                    StartWash(visible = isEmpty, colors = t.startGradient)
                 }
                 ChatTimeline(
                     onEditPrompt = { viewModel.branchPrompt(it, true, onOpenBranch) },
@@ -312,14 +294,16 @@ fun ChatScreen(
                         modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
                     )
                 }
-                if (uiState.isAgentRunning) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(when {
-                        uiState.isPaused -> "Paused · Follow-ups are saved"
-                        uiState.pauseRequested -> "Pausing after the current action…"
-                        uiState.queuedFollowUps > 0 -> "${uiState.queuedFollowUps} follow-up queued"
-                        else -> "Working · You can send a follow-up"
-                    }, style = MaterialTheme.typography.labelMedium, color = t.secondary, modifier = Modifier.weight(1f))
-                    TextButton(onClick = viewModel::togglePause) { Text(if (uiState.pauseRequested) "Resume" else "Pause") }
+                when (val chrome = runChrome(uiState.isAgentRunning, uiState.isPaused, uiState.pauseRequested, uiState.queuedFollowUps)) {
+                    RunChrome.Hidden -> Unit
+                    is RunChrome.Working -> RunStrip(
+                        label = if (chrome.queued > 0) "${chrome.queued} follow-up queued" else "Working · You can send a follow-up",
+                        action = "Pause",
+                        onAction = viewModel::togglePause,
+                    )
+                    is RunChrome.Pausing -> RunStrip("Pausing after the current action…", "Resume", viewModel::togglePause)
+                    is RunChrome.Paused -> RunStrip("Paused · Follow-ups are saved", "Resume", viewModel::togglePause)
+                    is RunChrome.Resuming -> RunStrip("Resuming…", action = null, onAction = {})
                 }
                 Composer(
                     isAgentRunning = uiState.isAgentRunning,
@@ -842,6 +826,43 @@ private fun StreamingResponse(
 }
 
 @Composable
+private fun RunStrip(label: String, action: String?, onAction: () -> Unit) {
+    val t = tokens()
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = t.secondary, modifier = Modifier.weight(1f))
+        if (action != null) TextButton(onClick = onAction) { Text(action) }
+    }
+}
+
+@Composable
+private fun StartWash(visible: Boolean, colors: List<Color>) {
+    var mounted by remember { mutableStateOf(visible) }
+    val alpha = remember { Animatable(if (visible) 1f else 0f) }
+    LaunchedEffect(visible) {
+        if (visible) mounted = true
+        alpha.animateTo(if (visible) 1f else 0f, Motion.spec(Motion.Standard))
+        if (!visible) mounted = false
+    }
+    if (!mounted) return
+    val brush = remember(colors) {
+        Brush.linearGradient(
+            colorStops = StartGradientStops.zip(colors).toTypedArray(),
+            start = Offset.Zero,
+            end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
+        )
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer { this.alpha = alpha.value }
+            .background(brush),
+    )
+}
+
+@Composable
 private fun ThinkingIndicator() {
     val t = tokens()
     val shape = RoundedCornerShape(24.dp)
@@ -857,7 +878,7 @@ private fun ThinkingIndicator() {
         if (LocalUiPrefs.current.mascotEnabled) {
             Mascot(size = 24.dp, face = MascotFace.Thinking, bounce = true)
         } else {
-            LoadingIndicator(
+            SnappyProgressIndicator(
                 modifier = Modifier.size(18.dp),
                 color = t.accent,
             )
@@ -908,7 +929,7 @@ private fun Composer(
 
     val minHeight by animateDpAsState(
         targetValue = if (isExpanded) 148.dp else 132.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
+        animationSpec = Motion.spec(Motion.Standard),
         label = "composer-min-height",
     )
 
@@ -929,7 +950,7 @@ private fun Composer(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = minHeight)
-                .animateContentSize(),
+                .animateContentSize(animationSpec = Motion.spec(Motion.Standard)),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(

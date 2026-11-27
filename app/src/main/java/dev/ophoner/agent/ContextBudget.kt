@@ -105,7 +105,29 @@ object ContextBudget {
                 }
             } }
 
-    private fun textCost(text: String): Long = (text.toByteArray(Charsets.UTF_8).size.toLong() + 2) / 3
+    private fun textCost(text: String): Long = (utf8Size(text).toLong() + 2) / 3
+
+    /** Byte length of [text] encoded as UTF-8, including Java's `?` replacement for an unpaired surrogate. */
+    internal fun utf8Size(text: String): Int {
+        var i = 0
+        var size = 0
+        while (i < text.length) {
+            val c = text[i].code
+            when {
+                c <= 0x7F -> size += 1
+                c <= 0x7FF -> size += 2
+                c < 0xD800 || c > 0xDFFF -> size += 3
+                c <= 0xDBFF && i + 1 < text.length && text[i + 1].code in 0xDC00..0xDFFF -> {
+                    size += 4
+                    i += 2
+                    continue
+                }
+                else -> size += 1
+            }
+            i++
+        }
+        return size
+    }
 }
 
 class ContextBudgetExceeded(message: String) : IllegalStateException(message)

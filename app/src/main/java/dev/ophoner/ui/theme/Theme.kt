@@ -4,7 +4,6 @@ import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialExpressiveTheme
-import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -267,7 +266,7 @@ fun OphoneTheme(
     ) {
         MaterialExpressiveTheme(
             colorScheme = colorSchemeFor(tokens),
-            motionScheme = MotionScheme.expressive(),
+            motionScheme = ophonerMotionScheme(),
             shapes = OphonerShapes,
             typography = ophoneTypography(uiFont.toFontFamily(), uiFont.isMono),
             content = content,

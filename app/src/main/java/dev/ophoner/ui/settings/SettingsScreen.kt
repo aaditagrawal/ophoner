@@ -36,7 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import dev.ophoner.ui.theme.SnappyProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenu
@@ -1015,13 +1015,13 @@ private fun DeviceLoginDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        SnappyProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Text(
-                            when {
-                                state.saving -> "Saving your connection…"
-                                state.networkStatus != null -> "Waiting for connection…"
-                                state.userCode.isBlank() -> "Getting your login code…"
-                                else -> "Waiting for approval in ChatGPT…"
+                            when (state.phase()) {
+                                DeviceLoginPhase.Saving -> "Saving your connection…"
+                                DeviceLoginPhase.WaitingForNetwork -> "Waiting for connection…"
+                                DeviceLoginPhase.RequestingCode -> "Getting your login code…"
+                                DeviceLoginPhase.AwaitingApproval -> "Waiting for approval in ChatGPT…"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

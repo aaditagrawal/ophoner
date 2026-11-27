@@ -21,9 +21,7 @@ internal object ShellPolicy {
 
         val normalized = normalizeShellPaths(trimmed)
         for (candidate in listOf(trimmed, normalized).distinct()) {
-            for ((pattern, reason) in DENY_PATTERNS) {
-                if (pattern.containsMatchIn(candidate)) return Decision.Reject(reason)
-            }
+            ShellDenyScan.deny(candidate)?.let { return Decision.Reject(it) }
         }
         Scanner(trimmed, depth).scanScript()?.let { return Decision.Reject(it) }
 
@@ -33,21 +31,43 @@ internal object ShellPolicy {
     }
 
     private fun firstCommandToken(command: String): String? {
-        var rest = command.trimStart()
-        while (true) {
-            val space = rest.indexOf(' ')
-            if (space <= 0) return rest.takeIf { it.isNotEmpty() }
-            val head = rest.substring(0, space)
-            if (head.matches(ASSIGNMENT)) {
-                rest = rest.substring(space + 1).trimStart()
+        var start = 0
+        while (start < command.length && command[start].isWhitespace()) start++
+        while (start < command.length) {
+            val space = command.indexOf(' ', start)
+            if (space < 0) return command.substring(start)
+            if (isAssignmentRange(command, start, space) ||
+                rangeEquals(command, start, space, "sudo") ||
+                rangeEquals(command, start, space, "env")
+            ) {
+                start = space + 1
+                while (start < command.length && command[start].isWhitespace()) start++
                 continue
             }
-            if (head == "sudo" || head == "env") {
-                rest = rest.substring(space + 1).trimStart()
-                continue
-            }
-            return head
+            return command.substring(start, space)
         }
+        return null
+    }
+
+    private fun rangeEquals(text: String, start: Int, end: Int, token: String): Boolean {
+        if (end - start != token.length) return false
+        for (i in token.indices) if (text[start + i] != token[i]) return false
+        return true
+    }
+
+    /** Same as `^[A-Za-z_][A-Za-z0-9_]*=.*` over [start, end), without copying the tail. */
+    private fun isAssignmentRange(text: String, start: Int, end: Int): Boolean {
+        if (start >= end) return false
+        val first = text[start]
+        if (first !in 'A'..'Z' && first !in 'a'..'z' && first != '_') return false
+        var i = start + 1
+        while (i < end) {
+            val c = text[i]
+            if (c == '=') return true
+            if (c !in 'A'..'Z' && c !in 'a'..'z' && c !in '0'..'9' && c != '_') return false
+            i++
+        }
+        return false
     }
 
     private class Scanner(private val text: String, private val depth: Int) {
@@ -348,33 +368,6 @@ internal object ShellPolicy {
         "time" to emptySet(),
         "busybox" to emptySet(),
         "toybox" to emptySet(),
-    )
-
-    private val DENY_PATTERNS: List<Pair<Regex, String>> = listOf(
-        Regex("""\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+/(\s|$)""") to
-            "rm -rf targeting /",
-        Regex("""\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+--\s+/(\s|$)""") to
-            "rm -rf targeting /",
-        Regex("""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/\*""") to
-            "rm -rf targeting /*",
-        Regex("""\bmkfs(\.|\s)""") to "mkfs (filesystem format)",
-        Regex("""\bdd\s+[^|]*\bif=""") to "dd with input file",
-        Regex(""":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:""") to "fork bomb",
-        Regex("""\bchmod\s+(-[a-zA-Z]*\s+)?777\s+/(\s|$)""") to "chmod 777 on /",
-        Regex("""\bchmod\s+-R\s+777\s+/""") to "recursive chmod 777 on /",
-        Regex("""(^|[\s;&|`])>\s*/system/""") to "write into /system",
-        Regex("""(^|[\s;&|`])>>\s*/system/""") to "append into /system",
-        Regex("""\btee\s+(-[a-zA-Z]+\s+)?/system/""") to "tee into /system",
-        Regex("""\bmount\s+""") to "mount operation",
-        Regex("""\bumount\s+""") to "umount operation",
-        Regex("""\breboot\b""") to "reboot",
-        Regex("""\bshutdown\b""") to "shutdown",
-        Regex("""\bhalt\b""") to "halt",
-        Regex("""\bsu\s+(-|\w+)?""") to "privilege escalation (su)",
-        Regex("""(^|[\s;&|`>])(>|>>|tee\s+\S*\s+)?/data/data/(?!dev\.ophoner(\.debug)?(/|$))""") to
-            "access to another app's /data/data",
-        Regex("""(^|[\s;&|`>])(>|>>|tee\s+\S*\s+)?/data/user/\d+/(?!dev\.ophoner(\.debug)?(/|$))""") to
-            "access to another app's /data/user",
     )
 
     private const val MAX_DEPTH = 8

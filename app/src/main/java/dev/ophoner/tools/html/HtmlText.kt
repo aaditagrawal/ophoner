@@ -10,6 +10,16 @@ package dev.ophoner.tools.html
  */
 internal fun htmlToText(html: String): String {
     val out = StringBuilder(html.length.coerceAtMost(64_000))
+    // A failed search to the end of the string stays a miss for every later index.
+    var noGtFrom = Int.MAX_VALUE
+    var noScriptFrom = Int.MAX_VALUE
+    var noStyleFrom = Int.MAX_VALUE
+    fun indexOfGt(from: Int): Int {
+        if (from >= noGtFrom) return -1
+        val end = html.indexOf('>', from)
+        if (end < 0) noGtFrom = from
+        return end
+    }
     fun emit(ch: Char) {
         val normalized = if (ch.isWhitespace()) ' ' else ch
         if (normalized == ' ' && (out.isEmpty() || out.last() == ' ')) return
@@ -19,13 +29,15 @@ internal fun htmlToText(html: String): String {
     while (i < html.length) {
         val c = html[i]
         if (c == '<') {
-            val skipped = skipElement(html, i)
-            if (skipped > i) {
+            val skipped = skipElement(html, i, noScriptFrom, noStyleFrom)
+            if (skipped.absentFrom < noScriptFrom && skipped.closer == "</script>") noScriptFrom = skipped.absentFrom
+            if (skipped.absentFrom < noStyleFrom && skipped.closer == "</style>") noStyleFrom = skipped.absentFrom
+            if (skipped.end > i) {
                 emit(' ')
-                i = skipped
+                i = skipped.end
                 continue
             }
-            val end = html.indexOf('>', i + 1)
+            val end = indexOfGt(i + 1)
             if (end < 0) {
                 emit(c)
                 i++
@@ -50,19 +62,25 @@ internal fun htmlToText(html: String): String {
     return out.toString()
 }
 
-private fun skipElement(html: String, start: Int): Int {
+private class Skip(val end: Int, val closer: String, val absentFrom: Int)
+
+private fun skipElement(html: String, start: Int, noScriptFrom: Int, noStyleFrom: Int): Skip {
     val closer = when {
         html.regionMatches(start, "<script", 0, 7, ignoreCase = true) -> "</script>"
         html.regionMatches(start, "<style", 0, 6, ignoreCase = true) -> "</style>"
-        else -> return start
+        else -> return Skip(start, "", Int.MAX_VALUE)
     }
-    val close = html.indexOf(closer, start + closer.length, ignoreCase = true)
-    return if (close >= 0) close + closer.length else start
+    val knownMiss = if (closer == "</script>") noScriptFrom else noStyleFrom
+    val from = start + closer.length
+    if (from >= knownMiss) return Skip(start, closer, knownMiss)
+    val close = html.indexOf(closer, from, ignoreCase = true)
+    return if (close >= 0) Skip(close + closer.length, closer, Int.MAX_VALUE) else Skip(start, closer, from)
 }
 
+private val ENTITIES = arrayOf("&nbsp;" to ' ', "&amp;" to '&', "&lt;" to '<', "&gt;" to '>')
+
 private fun namedEntity(html: String, start: Int): Pair<Char, Int>? {
-    val entities = arrayOf("&nbsp;" to ' ', "&amp;" to '&', "&lt;" to '<', "&gt;" to '>')
-    for ((token, value) in entities) {
+    for ((token, value) in ENTITIES) {
         if (html.regionMatches(start, token, 0, token.length, ignoreCase = false)) {
             return value to start + token.length
         }
@@ -80,6 +98,9 @@ internal class SearchResultScanner(private val limit: Int) {
     private val html = StringBuilder()
     private val hits = ArrayList<SearchHit>(limit.coerceAtLeast(0).coerceAtMost(8))
     private var cursor = 0
+    private var heldTitle = ""
+    private var heldHref: String? = null
+    private var heldAfter = 0
 
     val satisfied: Boolean get() = hits.size >= limit
 
@@ -96,6 +117,14 @@ internal class SearchResultScanner(private val limit: Int) {
 
     private fun drain(eof: Boolean) {
         while (hits.size < limit) {
+            if (heldHref != null) {
+                val snippet = readSnippet(heldAfter, eof)
+                if (snippet == null) return
+                hits.add(SearchHit(heldTitle, duckDuckGoTarget(heldHref!!), snippet.text))
+                cursor = snippet.resumeAt
+                heldHref = null
+                continue
+            }
             val marker = html.indexOf(RESULT_LINK, cursor)
             if (marker < 0) {
                 val keepFrom = html.length - (RESULT_LINK.length - 1)
@@ -127,7 +156,11 @@ internal class SearchResultScanner(private val limit: Int) {
             }
             val snippet = readSnippet(after, eof)
             if (snippet == null) {
-                cursor = tagStart
+                // Keep the finished title and only scan new bytes for the snippet.
+                heldTitle = title
+                heldHref = href
+                heldAfter = after
+                cursor = after
                 return
             }
             hits.add(SearchHit(title, duckDuckGoTarget(href), snippet.text))

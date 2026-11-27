@@ -96,11 +96,12 @@ class ModelsDevCatalog internal constructor(
                         !response.isSuccessful -> throw IOException("models.dev HTTP ${response.code}")
                         else -> {
                             val raw = response.body.string()
+                            val parsed = parseCatalog(raw)
                             Snapshot(
-                                models = parseModels(raw),
+                                models = parsed.models,
                                 etag = response.header("ETag"),
-                                releaseDates = parseReleaseDates(raw),
-                                protocols = parseProtocols(raw),
+                                releaseDates = parsed.releaseDates,
+                                protocols = parsed.protocols,
                             )
                         }
                     }
@@ -145,67 +146,68 @@ class ModelsDevCatalog internal constructor(
         }
     }
 
-    internal fun parseModels(raw: String): Map<String, List<String>> {
+    private data class ParsedCatalog(
+        val models: Map<String, List<String>>,
+        val releaseDates: Map<String, Map<String, String>>,
+        val protocols: Map<String, Map<String, ModelApi>>,
+    )
+
+    internal fun parseModels(raw: String): Map<String, List<String>> = parseCatalog(raw).models
+
+    /** One walk of the catalog body. The three previous parsers each parsed and walked it again. */
+    private fun parseCatalog(raw: String): ParsedCatalog {
         val root = json.parseToJsonElement(raw) as? JsonObject
             ?: throw IOException("Invalid models.dev catalog")
-        return (PROVIDER_IDS + OPTIONAL_PROVIDER_IDS).associateWith { providerId ->
-            val models = (root[providerId] as? JsonObject)?.get("models") as? JsonObject
-                ?: if (providerId in OPTIONAL_PROVIDER_IDS) return@associateWith emptyList()
-                else throw IOException("models.dev catalog missing $providerId")
-            models.mapNotNull { (key, element) ->
-                val model = element as? JsonObject ?: return@mapNotNull null
+        val ids = LinkedHashMap<String, List<String>>()
+        val dates = LinkedHashMap<String, Map<String, String>>()
+        val protocols = LinkedHashMap<String, Map<String, ModelApi>>()
+        for (providerId in PROVIDER_IDS + OPTIONAL_PROVIDER_IDS) {
+            val provider = root[providerId] as? JsonObject
+            val modelObj = provider?.get("models") as? JsonObject
+            if (modelObj == null) {
+                if (providerId !in OPTIONAL_PROVIDER_IDS) throw IOException("models.dev catalog missing $providerId")
+                ids[providerId] = emptyList()
+                dates[providerId] = emptyMap()
+                protocols[providerId] = emptyMap()
+                continue
+            }
+            val defaultNpm = (provider["npm"] as? JsonPrimitive)?.contentOrNull
+            val ranked = ArrayList<Pair<String, String>>()
+            val dateMap = LinkedHashMap<String, String>()
+            val protocolMap = LinkedHashMap<String, ModelApi>()
+            for ((key, element) in modelObj) {
+                val model = element as? JsonObject ?: continue
+                val dateId = (model["id"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: key.trim()
+                val release = (model["release_date"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                dateMap[dateId] = release
+                val protocolId = (model["id"] as? JsonPrimitive)?.contentOrNull ?: key
+                val npm = ((model["provider"] as? JsonObject)?.get("npm") as? JsonPrimitive)?.contentOrNull ?: defaultNpm
+                protocolMap[protocolId] = when (npm) {
+                    "@ai-sdk/openai" -> ModelApi.RESPONSES
+                    "@ai-sdk/anthropic" -> ModelApi.ANTHROPIC
+                    else -> ModelApi.CHAT_COMPLETIONS
+                }
                 val modalities = model["modalities"] as? JsonObject
                 fun supportsText(direction: String): Boolean =
                     (modalities?.get(direction) as? JsonArray)?.any {
                         (it as? JsonPrimitive)?.contentOrNull == "text"
                     } == true
-                // Ophoner needs text input/output and tools, not embedding or image-only models.
                 if ((model["tool_call"] as? JsonPrimitive)?.booleanOrNull != true ||
                     !supportsText("input") || !supportsText("output") ||
                     (model["status"] as? JsonPrimitive)?.contentOrNull == "deprecated"
-                ) return@mapNotNull null
-                val id = (model["id"] as? JsonPrimitive)?.contentOrNull?.trim()
-                    ?.takeIf { it.isNotEmpty() } ?: key.trim()
-                if (id.isEmpty()) return@mapNotNull null
-                val release = (model["release_date"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-                id to release
-            }.sortedWith(compareByDescending<Pair<String, String>> { it.second }.thenBy { it.first })
-                .map { it.first }.distinct().takeIf { it.isNotEmpty() }
-                ?: throw IOException("models.dev catalog has no compatible models for $providerId")
+                ) continue
+                val id = (model["id"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: key.trim()
+                if (id.isEmpty()) continue
+                ranked.add(id to release)
+            }
+            val compatible = ranked.sortedWith(compareByDescending<Pair<String, String>> { it.second }.thenBy { it.first })
+                .map { it.first }.distinct()
+            if (compatible.isEmpty()) throw IOException("models.dev catalog has no compatible models for $providerId")
+            ids[providerId] = compatible
+            dates[providerId] = dateMap
+            protocols[providerId] = protocolMap
         }
-    }
-
-    private fun parseReleaseDates(raw: String): Map<String, Map<String, String>> {
-        val root = json.parseToJsonElement(raw) as? JsonObject ?: return emptyMap()
-        return (PROVIDER_IDS + OPTIONAL_PROVIDER_IDS).associateWith { provider ->
-            val models = (root[provider] as? JsonObject)?.get("models") as? JsonObject
-            models.orEmpty().mapNotNull { (key, element) ->
-                val model = element as? JsonObject ?: return@mapNotNull null
-                val id = (model["id"] as? JsonPrimitive)?.contentOrNull?.trim()
-                    ?.takeIf { it.isNotEmpty() } ?: key.trim()
-                val date = (model["release_date"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-                id to date
-            }.toMap()
-        }
-    }
-
-    private fun parseProtocols(raw: String): Map<String, Map<String, ModelApi>> {
-        val root = json.parseToJsonElement(raw) as? JsonObject ?: return emptyMap()
-        return (PROVIDER_IDS + OPTIONAL_PROVIDER_IDS).associateWith { providerId ->
-            val provider = root[providerId] as? JsonObject
-            val models = provider?.get("models") as? JsonObject
-            val defaultNpm = (provider?.get("npm") as? JsonPrimitive)?.contentOrNull
-            models.orEmpty().mapNotNull { (key, element) ->
-                val model = element as? JsonObject ?: return@mapNotNull null
-                val id = (model["id"] as? JsonPrimitive)?.contentOrNull ?: key
-                val npm = ((model["provider"] as? JsonObject)?.get("npm") as? JsonPrimitive)?.contentOrNull ?: defaultNpm
-                id to when (npm) {
-                    "@ai-sdk/openai" -> ModelApi.RESPONSES
-                    "@ai-sdk/anthropic" -> ModelApi.ANTHROPIC
-                    else -> ModelApi.CHAT_COMPLETIONS
-                }
-            }.toMap()
-        }
+        return ParsedCatalog(ids, dates, protocols)
     }
 
     private companion object {

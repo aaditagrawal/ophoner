@@ -358,92 +358,129 @@ internal fun parseInlineMarkdown(
     style: InlineStyle,
 ): AnnotatedString {
     return buildAnnotatedString {
-        var remaining = text
-        while (remaining.isNotEmpty()) {
-            val boldItalic = BoldItalicPattern.find(remaining)
-            val bold = BoldPattern.find(remaining)
-            val italic = ItalicPattern.find(remaining)
-            val code = CodePattern.find(remaining)
-            val inlineMath = findInlineMath(remaining)
-
-            val matches = listOfNotNull(
-                boldItalic?.let { it.range.first to "bolditalic" },
-                bold?.let { it.range.first to "bold" },
-                italic?.let { it.range.first to "italic" },
-                code?.let { it.range.first to "code" },
-                inlineMath?.let { it.start to "math" },
-            ).sortedBy { it.first }
-
-            if (matches.isEmpty()) {
-                append(remaining)
-                break
+        var i = 0
+        while (i < text.length) {
+            val consumed = when (text[i]) {
+                '*' -> appendEmphasis(text, i)
+                '`' -> appendCode(text, i, style)
+                '$', '\\' -> appendMath(text, i, style)
+                else -> 0
             }
-
-            val (pos, type) = matches.first()
-            val matchRange: IntRange
-            val content: String
-            when (type) {
-                "bolditalic" -> {
-                    val match = boldItalic!!
-                    matchRange = match.range
-                    content = match.groupValues[1]
-                }
-                "bold" -> {
-                    val match = bold!!
-                    matchRange = match.range
-                    content = match.groupValues[1]
-                }
-                "italic" -> {
-                    val match = italic!!
-                    matchRange = match.range
-                    content = match.groupValues[1]
-                }
-                "code" -> {
-                    val match = code!!
-                    matchRange = match.range
-                    content = match.groupValues[1]
-                }
-                "math" -> {
-                    val match = inlineMath!!
-                    matchRange = match.start..match.endInclusive
-                    content = match.content
-                }
-                else -> break
+            if (consumed > 0) {
+                i += consumed
+                continue
             }
-
-            if (pos > 0) append(remaining.substring(0, pos))
-
-            when (type) {
-                "bolditalic" -> withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)) {
-                    append(content)
-                }
-                "bold" -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                    append(content)
-                }
-                "italic" -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-                    append(content)
-                }
-                "code" -> withStyle(SpanStyle(
-                    fontFamily = style.monoFamily,
-                    background = style.codeBg,
-                    color = style.codeText,
-                    fontSize = 13.sp,
-                )) {
-                    append(content)
-                }
-                "math" -> withStyle(SpanStyle(
-                    fontFamily = style.monoFamily,
-                    background = style.mathBg,
-                    color = style.mathText,
-                    fontSize = 13.sp,
-                )) {
-                    append(content)
-                }
+            val start = i
+            i++
+            while (i < text.length) {
+                val c = text[i]
+                if (c == '*' || c == '`' || c == '$' || c == '\\') break
+                i++
             }
-
-            remaining = remaining.substring(matchRange.last + 1)
+            append(text.substring(start, i))
         }
     }
+}
+
+/** Earliest delimiter wins. At one index the order is bold-italic, bold, then italic, matching the old sort. */
+private fun AnnotatedString.Builder.appendEmphasis(text: String, i: Int): Int {
+    val boldItalic = matchWrapped(text, i, "***")
+    if (boldItalic != null) {
+        withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)) {
+            append(text.substring(boldItalic.first, boldItalic.second))
+        }
+        return boldItalic.second + 3 - i
+    }
+    val bold = matchWrapped(text, i, "**")
+    if (bold != null) {
+        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+            append(text.substring(bold.first, bold.second))
+        }
+        return bold.second + 2 - i
+    }
+    val italic = matchItalic(text, i) ?: return 0
+    withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+        append(text.substring(italic.first, italic.second))
+    }
+    return italic.second + 1 - i
+}
+
+/** Content range of `marker + body + marker` on one line, or null. Body is non-empty and does not contain the marker. */
+private fun matchWrapped(text: String, i: Int, marker: String): Pair<Int, Int>? {
+    if (!text.startsWith(marker, i)) return null
+    val contentStart = i + marker.length
+    var j = contentStart
+    while (j < text.length && text[j] != '\n') {
+        if (text.startsWith(marker, j) && j > contentStart) return contentStart to j
+        j++
+    }
+    return null
+}
+
+private fun matchItalic(text: String, i: Int): Pair<Int, Int>? {
+    if (text[i] != '*' || (i > 0 && text[i - 1] == '*')) return null
+    if (i + 1 >= text.length || text[i + 1] == '*') return null
+    var j = i + 1
+    while (j < text.length && text[j] != '\n') {
+        if (text[j] == '*' && text[j - 1] != '*' && (j + 1 >= text.length || text[j + 1] != '*') && j > i + 1) {
+            return i + 1 to j
+        }
+        j++
+    }
+    return null
+}
+
+private fun AnnotatedString.Builder.appendCode(text: String, i: Int, style: InlineStyle): Int {
+    if (text[i] != '`') return 0
+    val close = text.indexOf('`', i + 1)
+    if (close <= i + 1) return 0
+    withStyle(SpanStyle(
+        fontFamily = style.monoFamily,
+        background = style.codeBg,
+        color = style.codeText,
+        fontSize = 13.sp,
+    )) {
+        append(text.substring(i + 1, close))
+    }
+    return close + 1 - i
+}
+
+private fun AnnotatedString.Builder.appendMath(text: String, i: Int, style: InlineStyle): Int {
+    val match = matchMathAt(text, i) ?: return 0
+    withStyle(SpanStyle(
+        fontFamily = style.monoFamily,
+        background = style.mathBg,
+        color = style.mathText,
+        fontSize = 13.sp,
+    )) {
+        append(match.content)
+    }
+    return match.endInclusive + 1 - i
+}
+
+private fun matchMathAt(text: String, i: Int): InlineMathMatch? {
+    if (text[i] == '\\' && i + 1 < text.length && text[i + 1] == '(') {
+        val end = findUnescaped(text, "\\)", i + 2)
+        if (end >= 0) {
+            val content = text.substring(i + 2, end).trim()
+            if (content.isNotEmpty()) return InlineMathMatch(i, end + 1, content)
+        }
+        return null
+    }
+    if (text[i] == '$' && !isEscaped(text, i) && !isDoubleDollar(text, i)) {
+        val end = findClosingDollar(text, i + 1)
+        if (end >= 0) {
+            val rawContent = text.substring(i + 1, end)
+            val content = rawContent.trim()
+            if (content.isNotEmpty() &&
+                rawContent.firstOrNull()?.isWhitespace() != true &&
+                rawContent.lastOrNull()?.isWhitespace() != true
+            ) {
+                return InlineMathMatch(i, end, content)
+            }
+        }
+    }
+    return null
 }
 
 private data class DisplayMathParseResult(
@@ -501,37 +538,6 @@ private fun isDisplayMathStart(line: String): Boolean {
     return trimmed.startsWith("$$") || trimmed.startsWith("\\[")
 }
 
-private fun findInlineMath(text: String): InlineMathMatch? {
-    var i = 0
-    while (i < text.length) {
-        if (text[i] == '\\' && i + 1 < text.length && text[i + 1] == '(') {
-            val end = findUnescaped(text, "\\)", i + 2)
-            if (end >= 0) {
-                val content = text.substring(i + 2, end).trim()
-                if (content.isNotEmpty()) return InlineMathMatch(i, end + 1, content)
-            }
-            i += 2
-            continue
-        }
-
-        if (text[i] == '$' && !isEscaped(text, i) && !isDoubleDollar(text, i)) {
-            val end = findClosingDollar(text, i + 1)
-            if (end >= 0) {
-                val rawContent = text.substring(i + 1, end)
-                val content = rawContent.trim()
-                if (content.isNotEmpty() &&
-                    rawContent.firstOrNull()?.isWhitespace() != true &&
-                    rawContent.lastOrNull()?.isWhitespace() != true
-                ) {
-                    return InlineMathMatch(i, end, content)
-                }
-            }
-        }
-        i++
-    }
-    return null
-}
-
 private fun findClosingDollar(text: String, start: Int): Int {
     var i = start
     while (i < text.length) {
@@ -570,7 +576,3 @@ private val DividerPattern = Regex("^-{3,}$|^\\*{3,}$|^_{3,}$")
 private val HeadingPattern = Regex("^(#{1,6})\\s+(.+)$")
 private val TableSeparatorPattern = Regex("^[:\\-]+$")
 private val HeadingPrefixPattern = Regex("^#{1,6}\\s+")
-private val BoldItalicPattern = Regex("\\*\\*\\*(.+?)\\*\\*\\*")
-private val BoldPattern = Regex("\\*\\*(.+?)\\*\\*")
-private val ItalicPattern = Regex("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)")
-private val CodePattern = Regex("`([^`]+)`")

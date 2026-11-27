@@ -7,6 +7,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -94,7 +95,7 @@ class OphonerAccessibilityService : AccessibilityService() {
             }
             for (i in 0 until node.childCount) {
                 if (visited >= 1000 || items.size >= 200) { truncated = true; break }
-                node.getChild(i)?.let { visit(it, depth + 1) }
+                childAt(node, i)?.let { visit(it, depth + 1) }
             }
             if (!relevant) { @Suppress("DEPRECATION") node.recycle() }
         }
@@ -102,6 +103,23 @@ class OphonerAccessibilityService : AccessibilityService() {
         return buildJsonObject {
             put("snapshot_id", snapshotId); put("package", snapshotPackage); put("nodes", JsonArray(items)); put("truncated", truncated)
         }.toString()
+    }
+
+    /**
+     * API 33+ prefetches a depth-first batch on the first child, then reads siblings from that cache.
+     * The no-arg [AccessibilityNodeInfo.getChild] starts a new hybrid prefetch on every node and
+     * cancels the previous one, which is one binder call per node.
+     */
+    private fun childAt(parent: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? {
+        if (Build.VERSION.SDK_INT < 33) return parent.getChild(index)
+        val strategy = if (index == 0) {
+            AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_DEPTH_FIRST or
+                AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS or
+                AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE
+        } else {
+            0
+        }
+        return parent.getChild(index, strategy)
     }
     fun nodeAction(args: JsonObject): Boolean {
         check(args.required("snapshot_id") == snapshotId) { "Stale snapshot. Read the screen again." }
